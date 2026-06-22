@@ -73,6 +73,7 @@ interface WebAIExecutionRecord {
   sourcePrompt?: string;
   status: "done" | "error" | "running";
   subtitle?: string;
+  thinking?: string;
   title: string;
 }
 
@@ -104,6 +105,11 @@ interface WebChatTextResult {
   ok: boolean;
   reason?: string;
   text?: string;
+}
+
+interface AssistantCaptureParts {
+  body: string;
+  thinking?: string;
 }
 
 interface MCPBridgeRequest {
@@ -165,7 +171,6 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [message, setMessage] = useState("");
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
   const [historyVisible, setHistoryVisible] = useState(false);
-  const [resultsCollapsed, setResultsCollapsed] = useState(true);
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [zaiLoginMode, setZaiLoginMode] = useState(false);
@@ -317,17 +322,19 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     captured: string,
     options: AssistantReplyRecordOptions = {},
   ) => {
-    const normalized = captured.trim();
-    if (!normalized || normalized === lastCapturedAssistantTextRef.current) {
+    const normalized = normalizeAssistantCapture(captured, options.sourcePrompt);
+    const dedupeKey = [normalized.body, normalized.thinking || ""].join("\n\n");
+    if (!normalized.body || dedupeKey === lastCapturedAssistantTextRef.current) {
       return false;
     }
-    lastCapturedAssistantTextRef.current = normalized;
+    lastCapturedAssistantTextRef.current = dedupeKey;
     appendExecutionRecord({
-      body: normalized,
+      body: normalized.body,
       kind: options.kind || "assistant",
       sourcePrompt: options.sourcePrompt,
       status: "done",
       subtitle: options.subtitle || service.label,
+      thinking: normalized.thinking,
       title: options.title || "Captured web answer",
     });
     return true;
@@ -344,6 +351,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         frameRef.current,
         baselineText || "",
         () => runId === assistantCaptureRunRef.current,
+        options?.sourcePrompt,
       );
       if (!captured || runId !== assistantCaptureRunRef.current) {
         return;
@@ -819,20 +827,6 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           <button
             style={{
               ...styles.miniButton,
-              background: resultsCollapsed
-                ? theme.surfaceBackground
-                : theme.badgeBackground,
-              borderColor: resultsCollapsed ? theme.buttonBorder : theme.badgeBorder,
-              color: resultsCollapsed ? theme.buttonText : theme.badgeText,
-            }}
-            onClick={() => setResultsCollapsed((collapsed) => !collapsed)}
-            type="button"
-          >
-            Results
-          </button>
-          <button
-            style={{
-              ...styles.miniButton,
               background: webSearchEnabled
                 ? theme.accentBackground
                 : theme.surfaceBackground,
@@ -864,7 +858,6 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         <div
           style={{
             ...styles.executionPanel,
-            ...(resultsCollapsed ? styles.executionPanelCollapsed : {}),
             background: theme.surfaceBackground,
             borderColor: theme.softBorder,
           }}
@@ -877,21 +870,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               <span style={{ ...styles.executionMeta, color: theme.mutedText }}>
                 {executionRecords.length} items
               </span>
-              <button
-                style={{
-                  ...styles.inlineActionButton,
-                  borderColor: theme.buttonBorder,
-                  color: theme.buttonText,
-                }}
-                onClick={() => setResultsCollapsed((collapsed) => !collapsed)}
-                type="button"
-              >
-                {resultsCollapsed ? "Expand" : "Collapse"}
-              </button>
             </div>
           </div>
-          {!resultsCollapsed && (
-            <div style={styles.resultsLayout}>
+          <div style={styles.resultsLayout}>
               {historyVisible && (
                 <aside
                   style={{
@@ -995,6 +976,26 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                         )}
                       </span>
                     </div>
+                    {record.thinking && (
+                      <details style={styles.thinkingDetails}>
+                        <summary
+                          style={{
+                            ...styles.thinkingSummary,
+                            color: theme.mutedText,
+                          }}
+                        >
+                          思考链 / Thinking
+                        </summary>
+                        <pre
+                          style={{
+                            ...styles.thinkingBody,
+                            color: theme.mutedText,
+                          }}
+                        >
+                          {record.thinking}
+                        </pre>
+                      </details>
+                    )}
                     <pre style={{ ...styles.executionBody, color: theme.text }}>
                       {record.body}
                     </pre>
@@ -1037,7 +1038,6 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 ))}
               </div>
             </div>
-          )}
         </div>
       )}
 
@@ -2703,7 +2703,7 @@ function escapeHTML(value: string): string {
     .replace(/"/g, "&quot;");
 }
 
-function extractLatestAssistantText(text: string): string {
+function extractLatestAssistantText(text: string, sourcePrompt = ""): string {
   const cleaned = text
     .replace(/ZOTERO_WEBAI_MCP_REQUEST[\s\S]*?END_ZOTERO_WEBAI_MCP_REQUEST/g, "")
     .replace(/\n{3,}/g, "\n\n")
@@ -2731,15 +2731,156 @@ function extractLatestAssistantText(text: string): string {
     lastMarkerIndex >= 0
       ? cleaned.slice(lastMarkerIndex + lastMarker.length).trim()
       : cleaned;
-  return truncateText(candidate || cleaned, MCP_CONTEXT_TEXT_LIMIT);
+  const stripped = stripPromptEcho(candidate || cleaned, sourcePrompt);
+  return truncateText(stripAssistantWebNoise(stripped), MCP_CONTEXT_TEXT_LIMIT);
+}
+
+function normalizeAssistantCapture(
+  captured: string,
+  sourcePrompt = "",
+): AssistantCaptureParts {
+  const normalized = stripAssistantWebNoise(
+    stripPromptEcho(captured, sourcePrompt),
+  );
+  const split = splitThinkingFromAnswer(normalized);
+  return {
+    body: truncateText(stripAssistantWebNoise(split.body), MCP_CONTEXT_TEXT_LIMIT),
+    thinking: split.thinking
+      ? truncateText(stripAssistantWebNoise(split.thinking), MCP_CONTEXT_TEXT_LIMIT)
+      : undefined,
+  };
+}
+
+function stripPromptEcho(value: string, sourcePrompt = ""): string {
+  let text = normalizeCapturedText(value);
+  const prompt = normalizeCapturedText(sourcePrompt);
+  if (!text || !prompt) {
+    return text;
+  }
+
+  const exactIndex = text.lastIndexOf(prompt);
+  if (exactIndex >= 0) {
+    text = text.slice(exactIndex + prompt.length).trim();
+  }
+
+  const promptEndMarkers = [
+    "Note: the paper text was truncated by Zotero WebAI; continue from the available excerpt first.",
+    "Use the following MCP tool output as external/local Zotero context for this conversation.",
+    "Use these web results as external context.",
+  ];
+  for (const marker of promptEndMarkers) {
+    const index = text.lastIndexOf(marker);
+    if (index >= 0) {
+      text = text.slice(index + marker.length).trim();
+    }
+  }
+
+  const promptLines = prompt
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length >= 48);
+  for (const line of promptLines.slice(-12)) {
+    const index = text.lastIndexOf(line);
+    if (index >= 0) {
+      text = text.slice(index + line.length).trim();
+    }
+  }
+
+  if (looksLikePromptEcho(text)) {
+    return "";
+  }
+  return text;
+}
+
+function normalizeCapturedText(value: string): string {
+  return value
+    .replace(/\\n/g, "\n")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function stripAssistantWebNoise(value: string): string {
+  const text = normalizeCapturedText(value)
+    .replace(/本回答由\s*AI\s*生成[，,]?\s*内容仅供参考[，,]?\s*请仔细甄别/g, "")
+    .replace(/内容由\s*AI\s*生成[，,]?\s*请仔细甄别/g, "");
+  const noiseLinePattern =
+    /^(深度思考|智能搜索|联网搜索|搜索|复制|分享|重新生成|停止生成|继续生成|给\s*(DeepSeek|Z\.ai)\s*发送消息)$/i;
+  return text
+    .split(/\n/)
+    .map((line) => line.trim())
+    .filter((line) => line && !noiseLinePattern.test(line))
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function splitThinkingFromAnswer(value: string): AssistantCaptureParts {
+  const text = normalizeCapturedText(value);
+  const tagMatch = text.match(/<think>([\s\S]*?)<\/think>/i);
+  if (tagMatch) {
+    return {
+      body: text.replace(tagMatch[0], "").trim(),
+      thinking: tagMatch[1]?.trim() || undefined,
+    };
+  }
+
+  const lines = text.split(/\n/);
+  const thinkingStart = lines.findIndex((line) =>
+    /^(思考链|思考过程|推理过程|深度思考|Reasoning|Thinking|Chain of thought)\s*[:：]?$/i.test(
+      line.trim(),
+    ),
+  );
+  if (thinkingStart < 0) {
+    return { body: text };
+  }
+
+  const answerStart = lines.findIndex(
+    (line, index) =>
+      index > thinkingStart &&
+      /^(最终答案|答案|回答|结论|Answer|Final answer|Result)\s*[:：]?$/i.test(
+        line.trim(),
+      ),
+  );
+  if (answerStart < 0) {
+    return {
+      body: lines.filter((_, index) => index !== thinkingStart).join("\n").trim(),
+    };
+  }
+
+  return {
+    body: lines.slice(answerStart + 1).join("\n").trim(),
+    thinking: lines.slice(thinkingStart + 1, answerStart).join("\n").trim(),
+  };
+}
+
+function looksLikePromptEcho(value: string): boolean {
+  const text = normalizeCapturedText(value);
+  if (!text) {
+    return false;
+  }
+  const hasPromptSections =
+    /(^|\n)(User message|Zotero context|Metadata|Selected passage|Paper content|MCP context|Web search context):/i.test(
+      text,
+    );
+  const hasZoteroTruncation = text.includes(
+    "Note: the paper text was truncated by Zotero WebAI",
+  );
+  const hasMCPJsonEcho =
+    /"appliedModeConfig"|"pagination"|"searchTime"|"hasMore"/.test(text);
+  return (hasPromptSections && (hasZoteroTruncation || hasMCPJsonEcho)) ||
+    (hasPromptSections && text.length > 1200 && !/[。！？.!?]\s*\n/.test(text));
 }
 
 async function waitForStableAssistantText(
   frame: Element | null,
   baselineText: string,
   shouldContinue: () => boolean,
+  sourcePrompt = "",
 ): Promise<string> {
-  const baseline = extractLatestAssistantText(baselineText);
+  const baseline = extractLatestAssistantText(baselineText, sourcePrompt);
   let bestCandidate = "";
   let stableReads = 0;
 
@@ -2752,7 +2893,7 @@ async function waitForStableAssistantText(
     if (!result.ok || !result.text) {
       continue;
     }
-    const candidate = extractLatestAssistantText(result.text);
+    const candidate = extractLatestAssistantText(result.text, sourcePrompt);
     if (!candidate || candidate === baseline || candidate.length < 8) {
       continue;
     }
@@ -2926,17 +3067,19 @@ const styles: Record<string, React.CSSProperties> = {
   executionPanel: {
     border: "1px solid #e0e0e0",
     borderRadius: "8px",
+    boxSizing: "border-box",
     display: "flex",
     flex: "0 0 auto",
     flexDirection: "column",
     gap: "8px",
-    maxHeight: "240px",
-    minHeight: 0,
+    height: "260px",
+    maxHeight: "70vh",
+    minHeight: "150px",
+    minWidth: 0,
     overflow: "hidden",
     padding: "8px",
-  },
-  executionPanelCollapsed: {
-    maxHeight: "48px",
+    resize: "vertical",
+    width: "100%",
   },
   executionHeader: {
     alignItems: "center",
@@ -2974,11 +3117,12 @@ const styles: Record<string, React.CSSProperties> = {
   historyPanel: {
     borderRight: "1px solid #e0e0e0",
     display: "flex",
-    flex: "0 0 180px",
+    flex: "0 0 240px",
     flexDirection: "column",
     gap: "6px",
+    maxWidth: "34%",
     minHeight: 0,
-    minWidth: 0,
+    minWidth: "220px",
     paddingRight: "8px",
   },
   historyHeader: {
@@ -3009,19 +3153,22 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexDirection: "column",
     gap: "2px",
+    minHeight: "52px",
     minWidth: 0,
-    padding: "6px",
+    padding: "6px 8px",
     textAlign: "left",
   },
   historyItemTitle: {
     fontSize: typography.meta,
     fontWeight: 700,
+    lineHeight: 1.25,
     overflow: "hidden",
-    textOverflow: "ellipsis",
-    whiteSpace: "nowrap",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
   },
   historyItemMeta: {
     fontSize: typography.caption,
+    lineHeight: 1.25,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -3084,7 +3231,30 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: typography.meta,
     lineHeight: 1.45,
     margin: "6px 0 0",
-    maxHeight: "180px",
+    maxHeight: "none",
+    overflow: "auto",
+    padding: 0,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  thinkingDetails: {
+    marginTop: "6px",
+  },
+  thinkingSummary: {
+    cursor: "pointer",
+    fontSize: typography.meta,
+    fontWeight: 600,
+    lineHeight: 1.35,
+  },
+  thinkingBody: {
+    background: "transparent",
+    border: 0,
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace",
+    fontSize: typography.meta,
+    lineHeight: 1.45,
+    margin: "6px 0 0",
+    maxHeight: "140px",
     overflow: "auto",
     padding: 0,
     whiteSpace: "pre-wrap",

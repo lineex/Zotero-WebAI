@@ -406,7 +406,7 @@ async function initializeMCP(config: MCPClientConfig): Promise<MCPRequestContext
     capabilities: {},
     clientInfo: {
       name: "Zotero WebAI",
-      version: "0.9.10",
+      version: "0.9.11",
     },
   });
   await sendMCPNotification(context, "notifications/initialized");
