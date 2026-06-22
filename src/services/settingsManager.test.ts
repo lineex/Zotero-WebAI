@@ -51,8 +51,8 @@ describe("settingsManager", () => {
       maxContextBudget: 4000,
       mcpAuthToken: "",
       mcpEndpoint: "http://127.0.0.1:23120/mcp",
-      mcpToolArgumentsTemplate: '{"query":"{{query}}","max_results":5}',
-      mcpToolName: "web_search",
+      mcpToolArgumentsTemplate: '{"q":"{{query}}","limit":1000,"mode":"preview"}',
+      mcpToolName: "search_library",
     });
     expect(getSettings()).not.toHaveProperty("apiKey");
     expect(getSettings()).not.toHaveProperty("model");
@@ -77,8 +77,8 @@ describe("settingsManager", () => {
       evidenceProviderMode: "mcp-http",
       mcpAuthToken: "token",
       mcpEndpoint: "http://127.0.0.1:23120/mcp",
-      mcpToolArgumentsTemplate: '{"query":"{{query}}","max_results":3}',
-      mcpToolName: "web_search",
+      mcpToolArgumentsTemplate: '{"q":"{{query}}","limit":1000,"mode":"preview"}',
+      mcpToolName: "search_library",
     });
 
     expect(getSettings()).toMatchObject({
@@ -86,8 +86,8 @@ describe("settingsManager", () => {
       evidenceProviderMode: "mcp-http",
       mcpAuthToken: "token",
       mcpEndpoint: "http://127.0.0.1:23120/mcp",
-      mcpToolArgumentsTemplate: '{"query":"{{query}}","max_results":3}',
-      mcpToolName: "web_search",
+      mcpToolArgumentsTemplate: '{"q":"{{query}}","limit":1000,"mode":"preview"}',
+      mcpToolName: "search_library",
     });
   });
 
@@ -96,8 +96,8 @@ describe("settingsManager", () => {
       validateEvidenceSettings({
         evidenceProviderMode: "mcp-http",
         mcpEndpoint: "http://127.0.0.1:23120/mcp",
-        mcpToolArgumentsTemplate: '{"query":"{{query}}","max_results":5}',
-        mcpToolName: "web_search",
+        mcpToolArgumentsTemplate: '{"q":"{{query}}","limit":1000,"mode":"preview"}',
+        mcpToolName: "search_library",
       }),
     ).resolves.toEqual({ valid: true });
   });
@@ -108,7 +108,7 @@ describe("settingsManager", () => {
         evidenceProviderMode: "mcp-http",
         mcpEndpoint: "http://127.0.0.1:23120/mcp",
         mcpToolArgumentsTemplate: '{"query":',
-        mcpToolName: "web_search",
+        mcpToolName: "search_library",
       }),
     ).resolves.toMatchObject({
       valid: false,

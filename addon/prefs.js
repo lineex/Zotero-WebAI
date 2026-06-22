@@ -7,9 +7,9 @@ pref(
   "mcp-http",
 );
 pref("extensions.zotero.zotero-webai.mcpEndpoint", "http://127.0.0.1:23120/mcp");
-pref("extensions.zotero.zotero-webai.mcpToolName", "web_search");
+pref("extensions.zotero.zotero-webai.mcpToolName", "search_library");
 pref(
   "extensions.zotero.zotero-webai.mcpToolArgumentsTemplate",
-  "{\"query\":\"{{query}}\",\"max_results\":5}",
+  "{\"q\":\"{{query}}\",\"limit\":1000,\"mode\":\"preview\"}",
 );
 pref("extensions.zotero.zotero-webai.mcpAuthToken", "");

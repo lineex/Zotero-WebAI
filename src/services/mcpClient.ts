@@ -1,7 +1,12 @@
 import type { Settings } from "./settingsManager";
 
+const DEFAULT_MCP_SEARCH_ARGUMENTS_TEMPLATE =
+  '{"q":"{{query}}","limit":1000,"mode":"preview"}';
+const DEFAULT_MCP_SEARCH_LIMIT = 1000;
+
 export interface MCPToolSummary {
   description?: string;
+  inputSchema?: unknown;
   name: string;
 }
 
@@ -11,6 +16,12 @@ export interface MCPToolResultItem {
   title?: string;
   url?: string;
   year?: string;
+}
+
+export interface MCPToolCallOutcome {
+  results: MCPToolResultItem[];
+  toolName: string;
+  usedFallback: boolean;
 }
 
 interface MCPClientConfig {
@@ -76,11 +87,222 @@ export async function callMCPTool(
   return normalizeToolResult(result, toolName);
 }
 
+export async function callMCPToolByName(
+  settings: Pick<Settings, "mcpAuthToken" | "mcpEndpoint">,
+  toolName: string,
+  toolArguments: Record<string, unknown> = {},
+): Promise<MCPToolResultItem[]> {
+  const normalizedToolName = toolName.trim();
+  if (!normalizedToolName) {
+    throw new Error("MCP tool name is required");
+  }
+
+  const context = await initializeMCP({
+    authToken: settings.mcpAuthToken,
+    endpoint: settings.mcpEndpoint || "",
+  });
+  const result = await sendMCPRequest(context, "tools/call", {
+    name: normalizedToolName,
+    arguments: toolArguments,
+  });
+  return normalizeToolResult(result, normalizedToolName);
+}
+
+export async function callMCPToolWithFallback(
+  settings: Pick<
+    Settings,
+    | "mcpAuthToken"
+    | "mcpEndpoint"
+    | "mcpToolArgumentsTemplate"
+    | "mcpToolName"
+  >,
+  query: string,
+  knownTools?: MCPToolSummary[],
+): Promise<MCPToolCallOutcome> {
+  let primaryError: unknown = null;
+  const configuredToolName = settings.mcpToolName?.trim();
+  if (configuredToolName) {
+    try {
+      return {
+        results: await callMCPTool(settings, query),
+        toolName: configuredToolName,
+        usedFallback: false,
+      };
+    } catch (error) {
+      primaryError = error;
+    }
+  }
+
+  const tools = knownTools || (await listMCPTools(settings));
+  const candidates = selectFallbackMCPTools(tools, configuredToolName);
+  let fallbackError: unknown = null;
+  for (const tool of candidates) {
+    try {
+      return {
+        results: await callMCPTool(
+          {
+            ...settings,
+            mcpToolArgumentsTemplate: buildMCPToolArgumentsTemplate(tool),
+            mcpToolName: tool.name,
+          },
+          query,
+        ),
+        toolName: tool.name,
+        usedFallback: true,
+      };
+    } catch (error) {
+      fallbackError = error;
+    }
+  }
+
+  if (primaryError) {
+    throw primaryError;
+  }
+  if (fallbackError) {
+    throw fallbackError;
+  }
+  throw new Error("No suitable MCP tool found for conversation context");
+}
+
 function buildToolArguments(template: string, query: string): unknown {
-  const source = template.trim() || '{"query":"{{query}}","max_results":5}';
+  const source = template.trim() || DEFAULT_MCP_SEARCH_ARGUMENTS_TEMPLATE;
   return JSON.parse(
     source.replace(/\{\{\s*query\s*\}\}/g, () => JSON.stringify(query).slice(1, -1)),
   );
+}
+
+function selectFallbackMCPTools(
+  tools: MCPToolSummary[],
+  configuredToolName?: string,
+): MCPToolSummary[] {
+  return tools
+    .map((tool) => ({
+      score: scoreFallbackMCPTool(tool, configuredToolName),
+      tool,
+    }))
+    .filter((candidate) => candidate.score > 0)
+    .sort((left, right) => right.score - left.score)
+    .map((candidate) => candidate.tool);
+}
+
+function scoreFallbackMCPTool(
+  tool: MCPToolSummary,
+  configuredToolName?: string,
+): number {
+  const haystack = `${tool.name} ${tool.description || ""}`.toLowerCase();
+  if (!tool.name || hasUnsafeToolVerb(haystack)) {
+    return 0;
+  }
+
+  let score = 0;
+  if (configuredToolName && tool.name === configuredToolName) score += 120;
+  if (/\b(web_?search|search|find|query|lookup)\b/i.test(tool.name)) score += 100;
+  if (/\b(search|find|query|lookup)\b/i.test(haystack)) score += 50;
+  if (/\b(zotero|library|item|paper|collection|note|annotation)\b/i.test(haystack)) {
+    score += 20;
+  }
+  if (getSchemaTextInputKey(tool.inputSchema)) score += 30;
+
+  return score;
+}
+
+function hasUnsafeToolVerb(value: string): boolean {
+  return /\b(add|append|attach|create|delete|edit|import|insert|move|patch|remove|rename|replace|save|set|tag|update|upload|write)\b/i.test(
+    value,
+  );
+}
+
+export function buildMCPToolArgumentsTemplate(
+  tool?: Pick<MCPToolSummary, "inputSchema"> | null,
+): string {
+  const schema = normalizeObjectRecord(tool?.inputSchema);
+  const properties = normalizeObjectRecord(schema?.properties);
+  if (!properties) {
+    return DEFAULT_MCP_SEARCH_ARGUMENTS_TEMPLATE;
+  }
+
+  const args: Record<string, unknown> = {};
+  const queryKey = getSchemaTextInputKey(tool?.inputSchema);
+  if (!queryKey) {
+    return DEFAULT_MCP_SEARCH_ARGUMENTS_TEMPLATE;
+  }
+
+  args[queryKey] = "{{query}}";
+  const limitKey = getSchemaLimitKey(properties);
+  if (limitKey) {
+    args[limitKey] = DEFAULT_MCP_SEARCH_LIMIT;
+  }
+  if (properties.mode) {
+    args.mode = "preview";
+  }
+
+  return JSON.stringify(args);
+}
+
+function getSchemaTextInputKey(schemaValue: unknown): string | null {
+  const schema = normalizeObjectRecord(schemaValue);
+  const properties = normalizeObjectRecord(schema?.properties);
+  if (!properties) {
+    return null;
+  }
+
+  const preferredKeys = [
+    "query",
+    "q",
+    "search",
+    "searchQuery",
+    "search_query",
+    "text",
+    "input",
+    "prompt",
+    "question",
+    "keyword",
+    "keywords",
+    "term",
+    "terms",
+    "title",
+  ];
+  for (const key of preferredKeys) {
+    if (isStringLikeSchema(properties[key])) {
+      return key;
+    }
+  }
+
+  const blockedKeyPattern = /\b(id|key|path|url|uri|file|attachment|collection)\b/i;
+  return (
+    Object.keys(properties).find(
+      (key) =>
+        !blockedKeyPattern.test(key) &&
+        /(query|search|text|keyword|term|title|name)/i.test(key) &&
+        isStringLikeSchema(properties[key]),
+    ) || null
+  );
+}
+
+function getSchemaLimitKey(properties: Record<string, unknown>): string | null {
+  const keys = ["max_results", "maxResults", "limit", "count", "top_k", "topK"];
+  return keys.find((key) => isNumberLikeSchema(properties[key])) || null;
+}
+
+function isStringLikeSchema(value: unknown): boolean {
+  const schema = normalizeObjectRecord(value);
+  if (!schema) {
+    return false;
+  }
+  const type = schema?.type;
+  return !type || type === "string";
+}
+
+function isNumberLikeSchema(value: unknown): boolean {
+  const schema = normalizeObjectRecord(value);
+  const type = schema?.type;
+  return type === "number" || type === "integer";
+}
+
+function normalizeObjectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
 }
 
 async function initializeMCP(config: MCPClientConfig): Promise<MCPRequestContext> {
@@ -218,6 +440,7 @@ function normalizeToolList(result: unknown): MCPToolSummary[] {
       const record = tool as Record<string, unknown>;
       return {
         description: String(record.description || ""),
+        inputSchema: record.inputSchema,
         name: String(record.name || ""),
       };
     })

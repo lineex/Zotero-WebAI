@@ -47,10 +47,38 @@ describe("WebAIWorkspace source", () => {
     expect(webWorkspaceSource).toContain("getSlashQuery");
     expect(webWorkspaceSource).toContain("filterSlashSkills");
     expect(webWorkspaceSource).toContain("resolveSkillFromMessage");
+    expect(webWorkspaceSource).toContain("insertPromptIntoWebChat");
+    expect(webWorkspaceSource).toContain("findWebChatComposer");
     expect(webWorkspaceSource).toContain(
       "输入消息，或输入 / 选择自定义 Skill",
     );
     expect(webWorkspaceSource).toContain("Open settings to add custom skills");
+  });
+
+  it("integrates generated prompts into the web chat instead of showing a copied-prompt panel", () => {
+    expect(webWorkspaceSource).toContain("Prompt inserted into");
+    expect(webWorkspaceSource).toContain("with clipboard fallback");
+    expect(webWorkspaceSource).not.toContain("Hide copied prompt");
+    expect(webWorkspaceSource).not.toContain("Show copied prompt");
+    expect(webWorkspaceSource).not.toContain("copiedPrompt");
+    expect(webWorkspaceSource).not.toContain("generatedPrompt");
+  });
+
+  it("adds default MCP context into the generated web-chat prompt", () => {
+    expect(webWorkspaceSource).toContain("listMCPTools");
+    expect(webWorkspaceSource).toContain("callMCPToolByName");
+    expect(webWorkspaceSource).toContain("callMCPToolWithFallback");
+    expect(webWorkspaceSource).toContain("fetchMCPContextForConversation");
+    expect(webWorkspaceSource).toContain("shouldUseMCPInConversation");
+    expect(webWorkspaceSource).toContain("buildMCPConversationQuery");
+    expect(webWorkspaceSource).toContain("formatMCPPromptContext");
+    expect(webWorkspaceSource).toContain("ZOTERO_WEBAI_MCP_REQUEST");
+    expect(webWorkspaceSource).toContain("Available Zotero MCP tools");
+    expect(webWorkspaceSource).toContain("MCP context:");
+    expect(webWorkspaceSource).toContain("MCP unavailable; using Zotero context only.");
+    expect(webWorkspaceSource).toContain("mcp-http");
+    expect(webWorkspaceSource).not.toContain("\"/mcp\"");
+    expect(webWorkspaceSource).not.toContain("'/mcp'");
   });
 
   it("keeps removed PDF/image/MCP/note controls out of the composer", () => {

@@ -24,7 +24,7 @@ export interface PersistedSettings {
 export type Settings = PersistedSettings;
 
 export const DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE =
-  '{"query":"{{query}}","max_results":5}';
+  '{"q":"{{query}}","limit":1000,"mode":"preview"}';
 export const DEFAULT_MCP_ENDPOINT = "http://127.0.0.1:23120/mcp";
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -36,7 +36,7 @@ export const DEFAULT_SETTINGS: Settings = {
   mcpAuthToken: "",
   mcpEndpoint: DEFAULT_MCP_ENDPOINT,
   mcpToolArgumentsTemplate: DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
-  mcpToolName: "web_search",
+  mcpToolName: "search_library",
 };
 
 export const PREFERENCES_PANE_ID = `${config.addonRef}-prefpane`;
@@ -398,7 +398,7 @@ export function saveSettings(settings: Partial<PersistedSettings>): void {
   if (settings.mcpToolName !== undefined) {
     setPref(
       "mcpToolName",
-      settings.mcpToolName.trim() || DEFAULT_SETTINGS.mcpToolName || "web_search",
+      settings.mcpToolName.trim() || DEFAULT_SETTINGS.mcpToolName || "search_library",
     );
   }
 }
@@ -413,9 +413,6 @@ export function getEvidenceSettingsIssue(
   if (settings.evidenceProviderMode === "mcp-http") {
     if (!settings.mcpEndpoint?.trim()) {
       return "MCP endpoint not configured. Open plugin Settings to enable MCP tools.";
-    }
-    if (!settings.mcpToolName?.trim()) {
-      return "MCP tool name not configured. Open plugin Settings to enable MCP tools.";
     }
     return null;
   }
@@ -445,7 +442,7 @@ function mergeSettings(overrides?: Partial<Settings>): Settings {
         DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
     ),
     mcpToolName: String(
-      overrides.mcpToolName ?? settings.mcpToolName ?? "web_search",
+      overrides.mcpToolName ?? settings.mcpToolName ?? "search_library",
     ),
   };
 }
@@ -470,9 +467,6 @@ export async function validateEvidenceSettings(
   if (settings.evidenceProviderMode === "mcp-http") {
     if (!settings.mcpEndpoint?.trim()) {
       return { valid: false, error: "MCP endpoint is required" };
-    }
-    if (!settings.mcpToolName?.trim()) {
-      return { valid: false, error: "MCP tool name is required" };
     }
     try {
       JSON.parse(

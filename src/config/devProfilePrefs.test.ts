@@ -12,8 +12,8 @@ describe("buildDevProfilePrefs", () => {
           ZOTERO_WEBAI_MCP_AUTH_TOKEN: "token-dev",
           ZOTERO_WEBAI_MCP_ENDPOINT: "http://127.0.0.1:23120/mcp",
           ZOTERO_WEBAI_MCP_TOOL_ARGUMENTS_TEMPLATE:
-            "{\"query\":\"{{query}}\"}",
-          ZOTERO_WEBAI_MCP_TOOL_NAME: "web_search",
+            "{\"q\":\"{{query}}\",\"limit\":1000,\"mode\":\"preview\"}",
+          ZOTERO_WEBAI_MCP_TOOL_NAME: "search_library",
         },
         prefsPrefix: "extensions.zotero.zotero-ai-assistant",
       }),
@@ -25,8 +25,8 @@ describe("buildDevProfilePrefs", () => {
       "extensions.zotero.zotero-ai-assistant.mcpEndpoint":
         "http://127.0.0.1:23120/mcp",
       "extensions.zotero.zotero-ai-assistant.mcpToolArgumentsTemplate":
-        "{\"query\":\"{{query}}\"}",
-      "extensions.zotero.zotero-ai-assistant.mcpToolName": "web_search",
+        "{\"q\":\"{{query}}\",\"limit\":1000,\"mode\":\"preview\"}",
+      "extensions.zotero.zotero-ai-assistant.mcpToolName": "search_library",
     });
   });
 

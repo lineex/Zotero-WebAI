@@ -1,5 +1,7 @@
 import {
   DEFAULT_EVIDENCE_PROVIDER_MODE,
+  DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
+  DEFAULT_SETTINGS,
   getSettings,
   parseCustomPresets,
   saveSettings,
@@ -72,9 +74,6 @@ const EVIDENCE_VALIDATE_BUTTON_ID =
 const EVIDENCE_STATUS_ID = "zotero-ai-assistant-pref-evidence-status";
 const MCP_SETTINGS_ID = "zotero-ai-assistant-pref-mcp-settings";
 const MCP_ENDPOINT_ID = "zotero-ai-assistant-pref-mcp-endpoint";
-const MCP_TOOL_NAME_ID = "zotero-ai-assistant-pref-mcp-tool-name";
-const MCP_TOOL_ARGUMENTS_TEMPLATE_ID =
-  "zotero-ai-assistant-pref-mcp-tool-arguments-template";
 const MCP_AUTH_TOKEN_ID = "zotero-ai-assistant-pref-mcp-auth-token";
 const CUSTOM_PRESETS_ID = "zotero-ai-assistant-pref-custom-presets";
 const SLASH_CUSTOM_ID = "zotero-ai-assistant-pref-slash-custom";
@@ -471,10 +470,6 @@ export function registerPreferencesPane(
     () => persist(),
   );
   bindFieldEvent(doc, MCP_ENDPOINT_ID, "change", () => persist());
-  bindFieldEvent(doc, MCP_TOOL_NAME_ID, "change", () => persist());
-  bindFieldEvent(doc, MCP_TOOL_ARGUMENTS_TEMPLATE_ID, "change", () =>
-    persist(),
-  );
   bindFieldEvent(doc, MCP_AUTH_TOKEN_ID, "change", () => persist());
   bindButtonActivation(doc, SLASH_ADD_ID, () => {
     const next = addCustomSlashCard(slashState);
@@ -503,11 +498,6 @@ function hydrateForm(
   const evidenceProviderField = getField(doc, EVIDENCE_PROVIDER_ID);
   const mcpAuthTokenField = getField(doc, MCP_AUTH_TOKEN_ID);
   const mcpEndpointField = getField(doc, MCP_ENDPOINT_ID);
-  const mcpToolArgumentsTemplateField = getField(
-    doc,
-    MCP_TOOL_ARGUMENTS_TEMPLATE_ID,
-  );
-  const mcpToolNameField = getField(doc, MCP_TOOL_NAME_ID);
 
   if (customPresetsField) {
     customPresetsField.value = serializeSlashSettingsState(slashState);
@@ -520,13 +510,6 @@ function hydrateForm(
   }
   if (mcpEndpointField) {
     mcpEndpointField.value = settings.mcpEndpoint || "";
-  }
-  if (mcpToolArgumentsTemplateField) {
-    mcpToolArgumentsTemplateField.value =
-      settings.mcpToolArgumentsTemplate || "";
-  }
-  if (mcpToolNameField) {
-    mcpToolNameField.value = settings.mcpToolName || "";
   }
   applyEvidenceProviderVisibility(doc, settings.evidenceProviderMode);
 }
@@ -871,11 +854,6 @@ function readFormValues(doc: PreferencesDocument): Partial<PersistedSettings> {
   const evidenceProviderField = getField(doc, EVIDENCE_PROVIDER_ID);
   const mcpAuthTokenField = getField(doc, MCP_AUTH_TOKEN_ID);
   const mcpEndpointField = getField(doc, MCP_ENDPOINT_ID);
-  const mcpToolArgumentsTemplateField = getField(
-    doc,
-    MCP_TOOL_ARGUMENTS_TEMPLATE_ID,
-  );
-  const mcpToolNameField = getField(doc, MCP_TOOL_NAME_ID);
   const selectedProvider = evidenceProviderField?.value;
   const evidenceProviderMode =
     selectedProvider === "mcp-http" || selectedProvider === "mcp-web-search"
@@ -887,9 +865,8 @@ function readFormValues(doc: PreferencesDocument): Partial<PersistedSettings> {
     evidenceProviderMode,
     mcpAuthToken: mcpAuthTokenField?.value?.trim?.() ?? "",
     mcpEndpoint: mcpEndpointField?.value?.trim?.() ?? "",
-    mcpToolArgumentsTemplate:
-      mcpToolArgumentsTemplateField?.value?.trim?.() ?? "",
-    mcpToolName: mcpToolNameField?.value?.trim?.() ?? "",
+    mcpToolArgumentsTemplate: DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
+    mcpToolName: DEFAULT_SETTINGS.mcpToolName,
   };
 }
 

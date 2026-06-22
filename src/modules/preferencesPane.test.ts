@@ -332,8 +332,6 @@ describe("registerPreferencesPane", () => {
   let mcpAuthTokenField: FakeField;
   let mcpEndpointField: FakeField;
   let mcpSettingsRow: FakeField;
-  let mcpToolArgumentsTemplateField: FakeField;
-  let mcpToolNameField: FakeField;
   let saveButton: FakeButton;
   let slashAddButton: FakeButton;
   let slashCustom: FakeContainer;
@@ -354,8 +352,6 @@ describe("registerPreferencesPane", () => {
     mcpAuthTokenField = new FakeField();
     mcpEndpointField = new FakeField();
     mcpSettingsRow = new FakeField();
-    mcpToolArgumentsTemplateField = new FakeField();
-    mcpToolNameField = new FakeField();
     saveButton = new FakeButton();
     slashAddButton = new FakeButton();
     slashCustom = new FakeContainer();
@@ -372,8 +368,8 @@ describe("registerPreferencesPane", () => {
         maxContextBudget: 8192,
         mcpAuthToken: "",
         mcpEndpoint: "http://127.0.0.1:23120/mcp",
-        mcpToolArgumentsTemplate: "{\"query\":\"{{query}}\",\"max_results\":5}",
-        mcpToolName: "web_search",
+        mcpToolArgumentsTemplate: "{\"q\":\"{{query}}\",\"limit\":1000,\"mode\":\"preview\"}",
+        mcpToolName: "search_library",
       })),
       saveSettings: vi.fn(),
       validateEvidenceSettings: vi.fn(async () => ({ valid: true })),
@@ -391,9 +387,6 @@ describe("registerPreferencesPane", () => {
       "zotero-ai-assistant-pref-mcp-auth-token": mcpAuthTokenField,
       "zotero-ai-assistant-pref-mcp-endpoint": mcpEndpointField,
       "zotero-ai-assistant-pref-mcp-settings": mcpSettingsRow,
-      "zotero-ai-assistant-pref-mcp-tool-arguments-template":
-        mcpToolArgumentsTemplateField,
-      "zotero-ai-assistant-pref-mcp-tool-name": mcpToolNameField,
       "zotero-ai-assistant-pref-save": saveButton,
       "zotero-ai-assistant-pref-slash-add": slashAddButton,
       "zotero-ai-assistant-pref-slash-custom": slashCustom,
@@ -412,10 +405,6 @@ describe("registerPreferencesPane", () => {
     expect(deps.getSettings).toHaveBeenCalledTimes(1);
     expect(evidenceProviderField.value).toBe("mcp-http");
     expect(mcpEndpointField.value).toBe("http://127.0.0.1:23120/mcp");
-    expect(mcpToolNameField.value).toBe("web_search");
-    expect(mcpToolArgumentsTemplateField.value).toBe(
-      "{\"query\":\"{{query}}\",\"max_results\":5}",
-    );
     expect(slashCustom.querySelectorAll('[data-slash-card="true"]')).toHaveLength(
       0,
     );
@@ -467,8 +456,8 @@ describe("registerPreferencesPane", () => {
       evidenceProviderMode: "mcp-web-search",
       mcpAuthToken: "",
       mcpEndpoint: "http://127.0.0.1:23120/mcp",
-      mcpToolArgumentsTemplate: "{\"query\":\"{{query}}\",\"max_results\":5}",
-      mcpToolName: "web_search",
+      mcpToolArgumentsTemplate: "{\"q\":\"{{query}}\",\"limit\":1000,\"mode\":\"preview\"}",
+      mcpToolName: "search_library",
     });
   });
 
@@ -477,9 +466,6 @@ describe("registerPreferencesPane", () => {
 
     evidenceProviderField.value = "mcp-http";
     mcpEndpointField.value = "http://127.0.0.1:23120/mcp";
-    mcpToolNameField.value = "web_search";
-    mcpToolArgumentsTemplateField.value =
-      "{\"query\":\"{{query}}\",\"max_results\":3}";
     mcpAuthTokenField.value = "token-next";
     evidenceProviderField.dispatch("command");
     await Promise.resolve();
@@ -491,8 +477,8 @@ describe("registerPreferencesPane", () => {
       evidenceProviderMode: "mcp-http",
       mcpAuthToken: "token-next",
       mcpEndpoint: "http://127.0.0.1:23120/mcp",
-      mcpToolArgumentsTemplate: "{\"query\":\"{{query}}\",\"max_results\":3}",
-      mcpToolName: "web_search",
+      mcpToolArgumentsTemplate: "{\"q\":\"{{query}}\",\"limit\":1000,\"mode\":\"preview\"}",
+      mcpToolName: "search_library",
     });
   });
 
@@ -501,9 +487,6 @@ describe("registerPreferencesPane", () => {
 
     evidenceProviderField.value = "mcp-http";
     mcpEndpointField.value = "http://127.0.0.1:23120/mcp";
-    mcpToolNameField.value = "web_search";
-    mcpToolArgumentsTemplateField.value =
-      "{\"query\":\"{{query}}\",\"max_results\":2}";
     mcpAuthTokenField.value = "token-next";
     evidenceValidateButton.dispatch("command");
     await Promise.resolve();
@@ -514,8 +497,8 @@ describe("registerPreferencesPane", () => {
       evidenceProviderMode: "mcp-http",
       mcpAuthToken: "token-next",
       mcpEndpoint: "http://127.0.0.1:23120/mcp",
-      mcpToolArgumentsTemplate: "{\"query\":\"{{query}}\",\"max_results\":2}",
-      mcpToolName: "web_search",
+      mcpToolArgumentsTemplate: "{\"q\":\"{{query}}\",\"limit\":1000,\"mode\":\"preview\"}",
+      mcpToolName: "search_library",
     });
     expect(evidenceStatus.textContent).toBe(
       "Evidence provider settings look good",

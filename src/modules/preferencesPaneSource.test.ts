@@ -128,11 +128,14 @@ describe("preferences.xhtml", () => {
     expect(preferencesSource).toContain(
       'id="zotero-ai-assistant-pref-mcp-endpoint"',
     );
-    expect(preferencesSource).toContain(
-      'id="zotero-ai-assistant-pref-mcp-tool-name"',
+    expect(preferencesSource).not.toContain(
+      `id="${["zotero-ai-assistant-pref-mcp", "tool-name"].join("-")}"`,
     );
-    expect(preferencesSource).toContain(
-      'id="zotero-ai-assistant-pref-mcp-tool-arguments-template"',
+    expect(preferencesSource).not.toContain(
+      `id="${[
+        "zotero-ai-assistant-pref-mcp",
+        "tool-arguments-template",
+      ].join("-")}"`,
     );
     expect(preferencesSource).toContain(
       'id="zotero-ai-assistant-pref-mcp-auth-token"',
