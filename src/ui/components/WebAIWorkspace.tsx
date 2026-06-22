@@ -63,14 +63,14 @@ interface MCPPromptContextResult {
   status: string | null;
 }
 
-type WebAIExecutionKind = "assistant" | "mcp" | "skill" | "error";
+type WebAIExecutionKind = "assistant" | "mcp" | "skill" | "web" | "error";
 
 interface WebAIExecutionRecord {
   body: string;
   createdAt: string;
   id: string;
   kind: WebAIExecutionKind;
-  raw?: string;
+  sourcePrompt?: string;
   status: "done" | "error" | "running";
   subtitle?: string;
   title: string;
@@ -83,8 +83,21 @@ type WebAIExecutionRecordDraft = Omit<
 
 interface AssistantReplyRecordOptions {
   kind?: WebAIExecutionKind;
+  sourcePrompt?: string;
   subtitle?: string;
   title?: string;
+}
+
+interface WebSearchPromptContextResult {
+  contextText: string;
+  query: string;
+  status: string | null;
+}
+
+interface WebSearchResult {
+  snippet: string;
+  title: string;
+  url: string;
 }
 
 interface WebChatTextResult {
@@ -121,6 +134,9 @@ const MCP_QUERY_TEXT_LIMIT = 3000;
 const MCP_BRIDGE_SCAN_TEXT_LIMIT = 120000;
 const MCP_BRIDGE_POLL_MS = 900;
 const EXECUTION_RECORD_LIMIT = 24;
+const WEB_SEARCH_RESULT_LIMIT = 6;
+const WEB_SEARCH_CONTEXT_TEXT_LIMIT = 7000;
+const WEBAI_NOTE_TITLE = "Zotero WebAI Notes";
 const SERVICES: WebAIService[] = [
   {
     id: "deepseek",
@@ -148,6 +164,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [isError, setIsError] = useState(false);
   const [message, setMessage] = useState("");
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
+  const [historyVisible, setHistoryVisible] = useState(false);
+  const [resultsCollapsed, setResultsCollapsed] = useState(true);
+  const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [zaiLoginMode, setZaiLoginMode] = useState(false);
   const [executionRecords, setExecutionRecords] = useState<
     WebAIExecutionRecord[]
@@ -305,6 +324,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     appendExecutionRecord({
       body: normalized,
       kind: options.kind || "assistant",
+      sourcePrompt: options.sourcePrompt,
       status: "done",
       subtitle: options.subtitle || service.label,
       title: options.title || "Captured web answer",
@@ -351,11 +371,15 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     copyTextToClipboard(prompt);
     const result = await insertPromptIntoWebChat(frameRef.current, prompt, true);
     focusFrame(frameRef.current);
+    const nextCaptureOptions = {
+      ...captureOptions,
+      sourcePrompt: captureOptions?.sourcePrompt || prompt,
+    };
     if (result.ok && result.submitted) {
       setStatus(
         `${statusPrefix ? `${statusPrefix} ` : ""}Prompt sent to ${service.label}; waiting for result.`,
       );
-      void waitForAssistantReply(baselineText, captureOptions);
+      void waitForAssistantReply(baselineText, nextCaptureOptions);
     } else if (result.ok) {
       setStatus(
         `${statusPrefix ? `${statusPrefix} ` : ""}Prompt inserted into ${service.label}. Send it in the web chat, then click Capture if needed.`,
@@ -365,6 +389,45 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         `${statusPrefix ? `${statusPrefix} ` : ""}Prompt copied (${prompt.length} characters). If it did not appear in ${service.label}, click the web chat box and paste.`,
       );
     }
+    setIsError(false);
+  };
+
+  const copyRecord = (record: WebAIExecutionRecord) => {
+    copyTextToClipboard(record.body);
+    setStatus(`Copied ${record.title}.`);
+    setIsError(false);
+  };
+
+  const regenerateRecord = async (record: WebAIExecutionRecord) => {
+    if (record.kind === "web") {
+      const query = record.sourcePrompt || record.title.replace(/^Web search:\s*/i, "");
+      await fetchWebSearchContextForConversation({
+        appendExecutionRecord,
+        contextSummary,
+        message: query,
+        scope,
+        selectedSkill,
+        setStatus,
+      });
+      setIsError(false);
+      return;
+    }
+
+    const prompt =
+      record.sourcePrompt && record.kind !== "skill"
+        ? record.sourcePrompt
+        : buildRegeneratePrompt(record);
+    await deliverPrompt(prompt, `Regenerating ${record.title}.`, {
+      kind: record.kind === "skill" ? "skill" : "assistant",
+      sourcePrompt: prompt,
+      subtitle: service.label,
+      title: `Regenerated: ${record.title}`,
+    });
+  };
+
+  const appendRecordToNote = async (record: WebAIExecutionRecord) => {
+    const noteID = await appendResultToZoteroNote(scope, record);
+    setStatus(`Appended ${record.title} to Zotero WebAI Notes (#${noteID}).`);
     setIsError(false);
   };
 
@@ -430,10 +493,14 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   };
 
   const sendPrompt = async () => {
-    const resolved = resolveSkillFromMessage(message, customSkills, selectedSkill);
-    if (resolved.skill && resolved.skill.id !== selectedSkillID) {
-      setSelectedSkillID(resolved.skill.id);
+    const draftMessage = message;
+    const resolved = resolveSkillFromMessage(draftMessage, customSkills, selectedSkill);
+    if (!resolved.skill && !resolved.message.trim()) {
+      throw new Error("Write a message or choose a custom skill with /.");
     }
+    setMessage("");
+    setSelectedSkillID(null);
+
     const promptInput = {
       contextSummary,
       message: resolved.message,
@@ -449,6 +516,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           skill: resolved.skill,
         }),
         kind: "skill",
+        sourcePrompt: resolved.message,
         status: "done",
         subtitle: `/${resolved.skill.slashCommand}`,
         title: `Skill: ${resolved.skill.label}`,
@@ -457,10 +525,15 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     const mcpBridgeToken = shouldUseMCPInConversation(settings)
       ? createMCPBridgeToken()
       : "";
-    const basePrompt = buildWorkspacePrompt({
-      ...promptInput,
-      mcpContext: "",
-    });
+    const shouldUseWebSearch =
+      webSearchEnabled || shouldAutoUseWebSearch(resolved.message);
+    const webContext = shouldUseWebSearch
+      ? await fetchWebSearchContextForConversation({
+          appendExecutionRecord,
+          ...promptInput,
+          setStatus,
+        })
+      : { contextText: "", query: "", status: null };
     const mcpContext = await fetchMCPContextForConversation(settings, {
       appendExecutionRecord,
       ...promptInput,
@@ -470,18 +543,20 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     if (mcpBridgeToken && mcpContext.contextText) {
       activeMCPBridgeTokensRef.current.add(mcpBridgeToken);
     }
-    const prompt = mcpContext.contextText
-      ? buildWorkspacePrompt({
-          ...promptInput,
-          mcpContext: mcpContext.contextText,
-        })
-      : basePrompt;
+    const prompt = buildWorkspacePrompt({
+      ...promptInput,
+      mcpContext: mcpContext.contextText,
+      webContext: webContext.contextText,
+    });
     await deliverPrompt(
       prompt,
-      mcpContext.status,
-      resolved.skill
-        ? buildSkillReplyRecordOptions(resolved.skill, service.label)
-        : undefined,
+      [webContext.status, mcpContext.status].filter(Boolean).join(" ") || null,
+      {
+        ...(resolved.skill
+          ? buildSkillReplyRecordOptions(resolved.skill, service.label)
+          : {}),
+        sourcePrompt: prompt,
+      },
     );
   };
 
@@ -687,6 +762,48 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           <button
             style={{
               ...styles.miniButton,
+              background: historyVisible
+                ? theme.badgeBackground
+                : theme.surfaceBackground,
+              borderColor: historyVisible ? theme.badgeBorder : theme.buttonBorder,
+              color: historyVisible ? theme.badgeText : theme.buttonText,
+            }}
+            onClick={() => setHistoryVisible((visible) => !visible)}
+            type="button"
+          >
+            History
+          </button>
+          <button
+            style={{
+              ...styles.miniButton,
+              background: resultsCollapsed
+                ? theme.surfaceBackground
+                : theme.badgeBackground,
+              borderColor: resultsCollapsed ? theme.buttonBorder : theme.badgeBorder,
+              color: resultsCollapsed ? theme.buttonText : theme.badgeText,
+            }}
+            onClick={() => setResultsCollapsed((collapsed) => !collapsed)}
+            type="button"
+          >
+            Results
+          </button>
+          <button
+            style={{
+              ...styles.miniButton,
+              background: webSearchEnabled
+                ? theme.accentBackground
+                : theme.surfaceBackground,
+              borderColor: webSearchEnabled ? theme.accentBorder : theme.buttonBorder,
+              color: webSearchEnabled ? theme.accentText : theme.buttonText,
+            }}
+            onClick={() => setWebSearchEnabled((enabled) => !enabled)}
+            type="button"
+          >
+            Web Search
+          </button>
+          <button
+            style={{
+              ...styles.miniButton,
               background: theme.surfaceBackground,
               borderColor: theme.buttonBorder,
               color: theme.buttonText,
@@ -704,6 +821,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         <div
           style={{
             ...styles.executionPanel,
+            ...(resultsCollapsed ? styles.executionPanelCollapsed : {}),
             background: theme.surfaceBackground,
             borderColor: theme.softBorder,
           }}
@@ -712,74 +830,171 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             <span style={{ ...styles.executionTitle, color: theme.text }}>
               Results
             </span>
-            <span style={{ ...styles.executionMeta, color: theme.mutedText }}>
-              MCP and Skill outputs
-            </span>
-          </div>
-          <div style={styles.executionList}>
-            {executionRecords.map((record, index) => (
-              <details
-                key={record.id}
-                open={index === 0}
+            <div style={styles.executionHeaderActions}>
+              <span style={{ ...styles.executionMeta, color: theme.mutedText }}>
+                {executionRecords.length} items
+              </span>
+              <button
                 style={{
-                  ...styles.executionItem,
-                  borderColor:
-                    record.status === "error"
-                      ? theme.errorText
-                      : theme.softBorder,
+                  ...styles.inlineActionButton,
+                  borderColor: theme.buttonBorder,
+                  color: theme.buttonText,
                 }}
+                onClick={() => setResultsCollapsed((collapsed) => !collapsed)}
+                type="button"
               >
-                <summary style={styles.executionSummary}>
-                  <span
+                {resultsCollapsed ? "Expand" : "Collapse"}
+              </button>
+            </div>
+          </div>
+          {!resultsCollapsed && (
+            <div style={styles.resultsLayout}>
+              {historyVisible && (
+                <aside
+                  style={{
+                    ...styles.historyPanel,
+                    borderColor: theme.softBorder,
+                  }}
+                >
+                  <div style={styles.historyHeader}>
+                    <span style={{ ...styles.historyTitle, color: theme.text }}>
+                      History
+                    </span>
+                    <button
+                      style={{
+                        ...styles.inlineActionButton,
+                        borderColor: theme.buttonBorder,
+                        color: theme.buttonText,
+                      }}
+                      onClick={() => setHistoryVisible(false)}
+                      type="button"
+                    >
+                      Hide
+                    </button>
+                  </div>
+                  <div style={styles.historyList}>
+                    {executionRecords.map((record) => (
+                      <button
+                        key={`history-${record.id}`}
+                        style={{
+                          ...styles.historyItem,
+                          borderColor: theme.softBorder,
+                          color: theme.text,
+                        }}
+                        onClick={() => copyRecord(record)}
+                        type="button"
+                      >
+                        <span style={styles.historyItemTitle}>{record.title}</span>
+                        <span
+                          style={{
+                            ...styles.historyItemMeta,
+                            color: theme.mutedText,
+                          }}
+                        >
+                          {formatRecordTimestamp(record.createdAt)}
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </aside>
+              )}
+              <div style={styles.executionList}>
+                {executionRecords.map((record) => (
+                  <article
+                    key={record.id}
                     style={{
-                      ...styles.executionKind,
-                      background:
-                        record.kind === "mcp"
-                          ? theme.accentBackground
-                          : record.kind === "skill"
-                            ? theme.badgeBackground
-                            : theme.surfaceBackground,
-                      borderColor: theme.buttonBorder,
-                      color:
+                      ...styles.executionItem,
+                      borderColor:
                         record.status === "error"
                           ? theme.errorText
-                          : theme.text,
+                          : theme.softBorder,
                     }}
                   >
-                    {record.kind}
-                  </span>
-                  <span style={styles.executionSummaryText}>
-                    <span style={{ ...styles.executionItemTitle, color: theme.text }}>
-                      {record.title}
-                    </span>
-                    {record.subtitle && (
+                    <div style={styles.executionSummary}>
                       <span
                         style={{
-                          ...styles.executionItemSubtitle,
-                          color: theme.mutedText,
+                          ...styles.executionKind,
+                          background:
+                            record.kind === "mcp"
+                              ? theme.accentBackground
+                              : record.kind === "skill"
+                                ? theme.badgeBackground
+                                : record.kind === "web"
+                                  ? theme.noticeBackground
+                                  : theme.surfaceBackground,
+                          borderColor: theme.buttonBorder,
+                          color:
+                            record.status === "error"
+                              ? theme.errorText
+                              : theme.text,
                         }}
                       >
-                        {record.subtitle}
+                        {record.kind}
                       </span>
-                    )}
-                  </span>
-                </summary>
-                <pre style={{ ...styles.executionBody, color: theme.text }}>
-                  {record.body}
-                </pre>
-                {record.raw && (
-                  <details style={styles.executionRaw}>
-                    <summary style={{ ...styles.executionRawSummary, color: theme.mutedText }}>
-                      Raw result
-                    </summary>
+                      <span style={styles.executionSummaryText}>
+                        <span
+                          style={{
+                            ...styles.executionItemTitle,
+                            color: theme.text,
+                          }}
+                        >
+                          {record.title}
+                        </span>
+                        {record.subtitle && (
+                          <span
+                            style={{
+                              ...styles.executionItemSubtitle,
+                              color: theme.mutedText,
+                            }}
+                          >
+                            {record.subtitle}
+                          </span>
+                        )}
+                      </span>
+                    </div>
                     <pre style={{ ...styles.executionBody, color: theme.text }}>
-                      {record.raw}
+                      {record.body}
                     </pre>
-                  </details>
-                )}
-              </details>
-            ))}
-          </div>
+                    <div style={styles.recordActions}>
+                      <button
+                        style={{
+                          ...styles.inlineActionButton,
+                          borderColor: theme.buttonBorder,
+                          color: theme.buttonText,
+                        }}
+                        onClick={() => copyRecord(record)}
+                        type="button"
+                      >
+                        Copy
+                      </button>
+                      <button
+                        style={{
+                          ...styles.inlineActionButton,
+                          borderColor: theme.buttonBorder,
+                          color: theme.buttonText,
+                        }}
+                        onClick={() => void runAction(() => regenerateRecord(record))}
+                        type="button"
+                      >
+                        Regenerate
+                      </button>
+                      <button
+                        style={{
+                          ...styles.inlineActionButton,
+                          borderColor: theme.buttonBorder,
+                          color: theme.buttonText,
+                        }}
+                        onClick={() => void runAction(() => appendRecordToNote(record))}
+                        type="button"
+                      >
+                        Append Note
+                      </button>
+                    </div>
+                  </article>
+                ))}
+              </div>
+            </div>
+          )}
         </div>
       )}
 
@@ -1744,7 +1959,6 @@ async function runMCPBridgeRequest({
         arguments: request.arguments,
       }),
       kind: "mcp",
-      raw: formatMCPRawResult(detailed),
       status: "done",
       subtitle: `tools/call ${request.toolName}`,
       title: `MCP result: ${request.toolName}`,
@@ -1853,7 +2067,6 @@ async function fetchMCPContextForConversation(
           usedFallback: outcome.usedFallback,
         }),
         kind: "mcp",
-        raw: formatMCPRawResult(outcome),
         status: "done",
         subtitle: outcome.usedFallback ? "automatic fallback" : "automatic context",
         title: `MCP context: ${outcome.toolName}`,
@@ -2007,12 +2220,14 @@ function buildWorkspacePrompt({
   message,
   scope,
   selectedSkill,
+  webContext,
 }: {
   contextSummary: AssembledContext | null;
   mcpContext: string;
   message: string;
   scope: ScopeContext | null;
   selectedSkill: WebAISkill | null;
+  webContext: string;
 }): string {
   const instruction = message.trim();
   if (!selectedSkill && !instruction) {
@@ -2033,6 +2248,7 @@ function buildWorkspacePrompt({
     metadata ? `Metadata:\n${metadata}` : "",
     selectedText ? `Selected passage:\n${selectedText}` : "",
     fullText ? `Paper content:\n${fullText}` : "",
+    webContext,
     mcpContext,
   ];
 
@@ -2123,13 +2339,325 @@ function formatMCPDetailedRecordBody(
     .join("\n");
 }
 
-function formatMCPRawResult(result: MCPToolDetailedResult): string {
-  return safeJSONStringify({
-    raw: result.raw,
-    results: result.results,
-    text: result.text,
-    toolName: result.toolName,
+async function fetchWebSearchContextForConversation({
+  appendExecutionRecord,
+  contextSummary,
+  message,
+  scope,
+  selectedSkill,
+  setStatus,
+}: {
+  appendExecutionRecord: (draft: WebAIExecutionRecordDraft) => string;
+  contextSummary: AssembledContext | null;
+  message: string;
+  scope: ScopeContext | null;
+  selectedSkill: WebAISkill | null;
+  setStatus: (status: string) => void;
+}): Promise<WebSearchPromptContextResult> {
+  const query = buildWebSearchQuery({
+    contextSummary,
+    message,
+    scope,
+    selectedSkill,
   });
+  if (!query) {
+    return { contextText: "", query: "", status: null };
+  }
+
+  try {
+    setStatus(`Searching web: ${query}`);
+    const results = await searchWeb(query);
+    const body = formatWebSearchRecordBody(query, results);
+    appendExecutionRecord({
+      body,
+      kind: "web",
+      sourcePrompt: query,
+      status: results.length ? "done" : "error",
+      subtitle: `${results.length} web results`,
+      title: `Web search: ${query}`,
+    });
+    return {
+      contextText: results.length
+        ? formatWebSearchPromptContext(query, results)
+        : "",
+      query,
+      status: results.length
+        ? `Web search added (${results.length} results).`
+        : "Web search returned no readable results.",
+    };
+  } catch (error) {
+    const messageText =
+      error instanceof Error && error.message ? error.message : String(error);
+    appendExecutionRecord({
+      body: `Query: ${query}\n\n${messageText}`,
+      kind: "error",
+      sourcePrompt: query,
+      status: "error",
+      subtitle: "built-in web search",
+      title: "Web search failed",
+    });
+    ztoolkit.log("Web search failed:", error);
+    return {
+      contextText: "",
+      query,
+      status: "Web search unavailable; continuing without web context.",
+    };
+  }
+}
+
+function buildWebSearchQuery({
+  contextSummary,
+  message,
+  scope,
+  selectedSkill,
+}: {
+  contextSummary: AssembledContext | null;
+  message: string;
+  scope: ScopeContext | null;
+  selectedSkill: WebAISkill | null;
+}): string {
+  const explicit = cleanSearchQuery(message);
+  if (explicit) {
+    return explicit;
+  }
+  const metadataTitle = contextSummary?.metadata
+    ?.split(/\r?\n/)
+    .find((line) => /title|题名|标题/i.test(line))
+    ?.replace(/^.*?:\s*/, "")
+    .trim();
+  return truncateText(
+    [
+      selectedSkill?.label || "",
+      scope?.label || metadataTitle || "",
+    ]
+      .filter(Boolean)
+      .join(" ")
+      .trim(),
+    240,
+  );
+}
+
+function cleanSearchQuery(value: string): string {
+  return truncateText(
+    value
+      .replace(/^\s*\/\S+\s*/, "")
+      .replace(/^(搜索|联网搜索|网页搜索|查找|查一下|search|web search)\s*[:：]?\s*/i, "")
+      .trim(),
+    240,
+  );
+}
+
+function shouldAutoUseWebSearch(value: string): boolean {
+  return /\b(latest|recent|today|news|current|web|internet|search)\b/i.test(value) ||
+    /(联网|网页|搜索|查找|查一下|最新|今天|新闻|当前|近期)/.test(value);
+}
+
+async function searchWeb(query: string): Promise<WebSearchResult[]> {
+  const url = `https://duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+  const html = await fetchText(url);
+  return parseDuckDuckGoHTML(html).slice(0, WEB_SEARCH_RESULT_LIMIT);
+}
+
+async function fetchText(url: string): Promise<string> {
+  try {
+    const response = await fetch(url, {
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "Mozilla/5.0 Zotero WebAI",
+      },
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    return await response.text();
+  } catch {
+    const xhr = await Zotero.HTTP.request("GET", url, {
+      headers: {
+        Accept: "text/html,application/xhtml+xml",
+        "User-Agent": "Mozilla/5.0 Zotero WebAI",
+      },
+      responseType: "text",
+      timeout: 20000,
+    });
+    return String(xhr.responseText || "");
+  }
+}
+
+function parseDuckDuckGoHTML(html: string): WebSearchResult[] {
+  const doc = new DOMParser().parseFromString(html, "text/html");
+  const results: WebSearchResult[] = [];
+  const nodes = Array.from(doc.querySelectorAll(".result")) as HTMLElement[];
+  for (const node of nodes) {
+    const anchor = node.querySelector<HTMLAnchorElement>(".result__a");
+    const title = normalizeWhitespace(anchor?.textContent || "");
+    const rawURL = anchor?.getAttribute("href") || "";
+    const snippet = normalizeWhitespace(
+      node.querySelector(".result__snippet")?.textContent || "",
+    );
+    const url = unwrapDuckDuckGoURL(rawURL);
+    if (title && url) {
+      results.push({ snippet, title, url });
+    }
+  }
+  return results;
+}
+
+function unwrapDuckDuckGoURL(url: string): string {
+  if (!url) {
+    return "";
+  }
+  try {
+    const parsed = new URL(url, "https://duckduckgo.com");
+    return parsed.searchParams.get("uddg") || parsed.href;
+  } catch {
+    return url;
+  }
+}
+
+function formatWebSearchRecordBody(
+  query: string,
+  results: WebSearchResult[],
+): string {
+  if (!results.length) {
+    return `Query: ${query}\n\nNo readable web results returned.`;
+  }
+  return [
+    `Query: ${query}`,
+    "",
+    ...results.map((result, index) =>
+      [
+        `${index + 1}. ${result.title}`,
+        result.url,
+        result.snippet,
+      ]
+        .filter(Boolean)
+        .join("\n"),
+    ),
+  ].join("\n\n");
+}
+
+function formatWebSearchPromptContext(
+  query: string,
+  results: WebSearchResult[],
+): string {
+  return truncateText(
+    [
+      "Web search context:",
+      `Query: ${query}`,
+      "Use these web results as external context. Cite URLs when relying on them and distinguish web context from Zotero/PDF context.",
+      "",
+      ...results.map((result, index) =>
+        [
+          `${index + 1}. ${result.title}`,
+          `URL: ${result.url}`,
+          result.snippet,
+        ]
+          .filter(Boolean)
+          .join("\n"),
+      ),
+    ].join("\n\n"),
+    WEB_SEARCH_CONTEXT_TEXT_LIMIT,
+  );
+}
+
+function buildRegeneratePrompt(record: WebAIExecutionRecord): string {
+  return [
+    "Regenerate the following Zotero WebAI result with improved clarity and completeness.",
+    `Result type: ${record.kind}`,
+    `Title: ${record.title}`,
+    record.subtitle ? `Context: ${record.subtitle}` : "",
+    "",
+    "Previous result:",
+    record.body,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+async function appendResultToZoteroNote(
+  scope: ScopeContext | null,
+  record: WebAIExecutionRecord,
+): Promise<number> {
+  const parentItem = resolveNoteParentItem(scope);
+  if (!parentItem) {
+    throw new Error("No current Zotero item is available for appending a note.");
+  }
+
+  const note = await getOrCreateWebAINote(parentItem);
+  const existing = note.getNote?.() || Zotero.Notes.defaultNote;
+  note.setNote(appendHTMLToZoteroNote(existing, formatRecordNoteHTML(record)));
+  await note.saveTx();
+  return note.id;
+}
+
+function resolveNoteParentItem(scope: ScopeContext | null): Zotero.Item | null {
+  const itemID = scope?.itemIds?.[0] || scope?.readerAttachmentId || 0;
+  if (!itemID) {
+    return null;
+  }
+  const item = Zotero.Items.get(itemID);
+  if (!item) {
+    return null;
+  }
+  return item.isRegularItem?.() ? item : item.parentItem || item.topLevelItem || item;
+}
+
+async function getOrCreateWebAINote(parentItem: Zotero.Item): Promise<Zotero.Item> {
+  const noteIDs = parentItem.getNotes?.(false) || [];
+  for (const noteID of noteIDs) {
+    const note = Zotero.Items.get(noteID);
+    if (note?.isNote?.() && note.getNoteTitle?.() === WEBAI_NOTE_TITLE) {
+      return note;
+    }
+  }
+
+  const note = new Zotero.Item("note");
+  const mutableNote = note as Zotero.Item & {
+    libraryID?: number;
+    parentID?: number | false;
+  };
+  mutableNote.libraryID = parentItem.libraryID;
+  mutableNote.parentID = parentItem.id;
+  note.setNote(
+    `<div class="zotero-note znv1"><h1>${escapeHTML(WEBAI_NOTE_TITLE)}</h1></div>`,
+  );
+  await note.saveTx();
+  return note;
+}
+
+function appendHTMLToZoteroNote(existing: string, addition: string): string {
+  const inner = existing
+    .replace(/^<div class="zotero-note znv1">\s*/i, "")
+    .replace(/\s*<\/div>\s*$/i, "");
+  return `<div class="zotero-note znv1">${inner}${addition}</div>`;
+}
+
+function formatRecordNoteHTML(record: WebAIExecutionRecord): string {
+  return [
+    "<hr/>",
+    `<h2>${escapeHTML(record.title)}</h2>`,
+    `<p><strong>${escapeHTML(record.kind.toUpperCase())}</strong>${
+      record.subtitle ? ` · ${escapeHTML(record.subtitle)}` : ""
+    } · ${escapeHTML(formatRecordTimestamp(record.createdAt))}</p>`,
+    `<pre>${escapeHTML(record.body)}</pre>`,
+  ].join("");
+}
+
+function formatRecordTimestamp(value: string): string {
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
+}
+
+function normalizeWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function escapeHTML(value: string): string {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 function extractLatestAssistantText(text: string): string {
@@ -2262,8 +2790,8 @@ const styles: Record<string, React.CSSProperties> = {
     border: "1px solid #e0e0e0",
     borderRadius: "6px",
     display: "flex",
-    flex: "1 1 460px",
-    minHeight: "360px",
+    flex: "1 1 620px",
+    minHeight: "520px",
     minWidth: 0,
     overflow: "hidden",
   },
@@ -2356,16 +2884,26 @@ const styles: Record<string, React.CSSProperties> = {
     flex: "0 0 auto",
     flexDirection: "column",
     gap: "8px",
-    maxHeight: "220px",
+    maxHeight: "240px",
     minHeight: 0,
     overflow: "hidden",
     padding: "8px",
+  },
+  executionPanelCollapsed: {
+    maxHeight: "48px",
   },
   executionHeader: {
     alignItems: "center",
     display: "flex",
     gap: "8px",
     justifyContent: "space-between",
+    minWidth: 0,
+  },
+  executionHeaderActions: {
+    alignItems: "center",
+    display: "flex",
+    flex: "0 0 auto",
+    gap: "6px",
     minWidth: 0,
   },
   executionTitle: {
@@ -2379,10 +2917,75 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
-  executionList: {
+  resultsLayout: {
     display: "flex",
+    flex: "1 1 auto",
+    gap: "8px",
+    minHeight: 0,
+    minWidth: 0,
+    overflow: "hidden",
+  },
+  historyPanel: {
+    borderRight: "1px solid #e0e0e0",
+    display: "flex",
+    flex: "0 0 180px",
     flexDirection: "column",
     gap: "6px",
+    minHeight: 0,
+    minWidth: 0,
+    paddingRight: "8px",
+  },
+  historyHeader: {
+    alignItems: "center",
+    display: "flex",
+    gap: "6px",
+    justifyContent: "space-between",
+    minWidth: 0,
+  },
+  historyTitle: {
+    fontSize: typography.label,
+    fontWeight: 700,
+    lineHeight: 1.3,
+  },
+  historyList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "4px",
+    minHeight: 0,
+    overflow: "auto",
+  },
+  historyItem: {
+    appearance: "none",
+    background: "transparent",
+    border: "1px solid #e0e0e0",
+    borderRadius: "6px",
+    cursor: "pointer",
+    display: "flex",
+    flexDirection: "column",
+    gap: "2px",
+    minWidth: 0,
+    padding: "6px",
+    textAlign: "left",
+  },
+  historyItemTitle: {
+    fontSize: typography.meta,
+    fontWeight: 700,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  historyItemMeta: {
+    fontSize: typography.caption,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  executionList: {
+    display: "flex",
+    flex: "1 1 auto",
+    flexDirection: "column",
+    gap: "6px",
+    minWidth: 0,
     minHeight: 0,
     overflow: "auto",
   },
@@ -2441,13 +3044,23 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
   },
-  executionRaw: {
-    marginTop: "6px",
+  recordActions: {
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    marginTop: "8px",
   },
-  executionRawSummary: {
+  inlineActionButton: {
+    appearance: "none",
+    background: "transparent",
+    border: "1px solid #c9c9c9",
+    borderRadius: "12px",
     cursor: "pointer",
     fontSize: typography.meta,
     fontWeight: 600,
+    minHeight: "24px",
+    padding: "2px 8px",
+    whiteSpace: "nowrap",
   },
   composerPanel: {
     border: "1px solid #e0e0e0",
