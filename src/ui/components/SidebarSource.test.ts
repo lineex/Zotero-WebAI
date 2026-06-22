@@ -41,24 +41,28 @@ describe("WebAIWorkspace source", () => {
     expect(webWorkspaceSource).toContain("Open External");
   });
 
-  it("supports PDF, selected text, imported PDF, image, MCP, and Zotero note workflows", () => {
-    expect(webWorkspaceSource).toContain("Copy PDF Prompt");
-    expect(webWorkspaceSource).toContain("Copy Selection");
-    expect(webWorkspaceSource).toContain("Copy Imported PDF");
-    expect(webWorkspaceSource).toContain("Copy Image Prompt");
-    expect(webWorkspaceSource).toContain("handleImportPDF");
-    expect(webWorkspaceSource).toContain("handleImageInput");
-    expect(webWorkspaceSource).toContain("handleMCPFetch");
-    expect(webWorkspaceSource).toContain("saveDraftNote");
+  it("supports custom slash skills in the WebAI composer", () => {
+    expect(webWorkspaceSource).toContain("parseCustomPresets");
+    expect(webWorkspaceSource).toContain("buildCustomSkills");
+    expect(webWorkspaceSource).toContain("getSlashQuery");
+    expect(webWorkspaceSource).toContain("filterSlashSkills");
+    expect(webWorkspaceSource).toContain("resolveSkillFromMessage");
+    expect(webWorkspaceSource).toContain(
+      "输入消息，或输入 / 选择自定义 Skill",
+    );
+    expect(webWorkspaceSource).toContain("Open settings to add custom skills");
   });
 
-  it("uses Zotero toolkit's native file picker for PDF import", () => {
-    expect(webWorkspaceSource).toContain(
-      'import { FilePickerHelper } from "zotero-plugin-toolkit";',
-    );
-    expect(webWorkspaceSource).toContain("new FilePickerHelper(");
-    expect(webWorkspaceSource).toContain("Import PDF into Zotero-WebAI");
-    expect(webWorkspaceSource).toContain("Zotero.Attachments.importFromFile");
+  it("keeps removed PDF/image/MCP/note controls out of the composer", () => {
+    expect(webWorkspaceSource).not.toContain("Copy PDF Prompt");
+    expect(webWorkspaceSource).not.toContain("Copy Selection");
+    expect(webWorkspaceSource).not.toContain("Copy Imported PDF");
+    expect(webWorkspaceSource).not.toContain("Copy Image Prompt");
+    expect(webWorkspaceSource).not.toContain("handleImportPDF");
+    expect(webWorkspaceSource).not.toContain("handleImageInput");
+    expect(webWorkspaceSource).not.toContain("handleMCPFetch");
+    expect(webWorkspaceSource).not.toContain("saveDraftNote");
+    expect(webWorkspaceSource).not.toContain("FilePickerHelper");
   });
 
   it("keeps model API configuration out of the web workspace", () => {

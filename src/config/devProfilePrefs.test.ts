@@ -10,7 +10,7 @@ describe("buildDevProfilePrefs", () => {
           DS_COPILOT_EVIDENCE_ENABLED: "1",
           DS_COPILOT_EVIDENCE_PROVIDER: "mcp-http",
           ZOTERO_WEBAI_MCP_AUTH_TOKEN: "token-dev",
-          ZOTERO_WEBAI_MCP_ENDPOINT: "http://127.0.0.1:3000/mcp",
+          ZOTERO_WEBAI_MCP_ENDPOINT: "http://127.0.0.1:23120/mcp",
           ZOTERO_WEBAI_MCP_TOOL_ARGUMENTS_TEMPLATE:
             "{\"query\":\"{{query}}\"}",
           ZOTERO_WEBAI_MCP_TOOL_NAME: "web_search",
@@ -23,7 +23,7 @@ describe("buildDevProfilePrefs", () => {
         "mcp-http",
       "extensions.zotero.zotero-ai-assistant.mcpAuthToken": "token-dev",
       "extensions.zotero.zotero-ai-assistant.mcpEndpoint":
-        "http://127.0.0.1:3000/mcp",
+        "http://127.0.0.1:23120/mcp",
       "extensions.zotero.zotero-ai-assistant.mcpToolArgumentsTemplate":
         "{\"query\":\"{{query}}\"}",
       "extensions.zotero.zotero-ai-assistant.mcpToolName": "web_search",

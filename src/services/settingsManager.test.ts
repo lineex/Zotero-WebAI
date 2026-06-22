@@ -46,11 +46,11 @@ describe("settingsManager", () => {
     expect(getSettings()).toMatchObject({
       customPresets: "",
       evidenceEnabled: false,
-      evidenceProviderMode: "mcp-web-search",
+      evidenceProviderMode: "mcp-http",
       keyboardShortcut: "I",
       maxContextBudget: 4000,
       mcpAuthToken: "",
-      mcpEndpoint: "",
+      mcpEndpoint: "http://127.0.0.1:23120/mcp",
       mcpToolArgumentsTemplate: '{"query":"{{query}}","max_results":5}',
       mcpToolName: "web_search",
     });
@@ -62,13 +62,13 @@ describe("settingsManager", () => {
   it("normalizes the legacy builtin-search provider to the new default mode", () => {
     prefState.set("evidenceProviderMode", "builtin-search");
 
-    expect(getSettings().evidenceProviderMode).toBe("mcp-web-search");
+    expect(getSettings().evidenceProviderMode).toBe("mcp-http");
   });
 
   it("normalizes removed API-backed providers to the web-only default mode", () => {
     prefState.set("evidenceProviderMode", "removed-provider");
 
-    expect(getSettings().evidenceProviderMode).toBe("mcp-web-search");
+    expect(getSettings().evidenceProviderMode).toBe("mcp-http");
   });
 
   it("persists evidence provider settings and MCP details", () => {
@@ -76,7 +76,7 @@ describe("settingsManager", () => {
       evidenceEnabled: true,
       evidenceProviderMode: "mcp-http",
       mcpAuthToken: "token",
-      mcpEndpoint: "http://127.0.0.1:3000/mcp",
+      mcpEndpoint: "http://127.0.0.1:23120/mcp",
       mcpToolArgumentsTemplate: '{"query":"{{query}}","max_results":3}',
       mcpToolName: "web_search",
     });
@@ -85,7 +85,7 @@ describe("settingsManager", () => {
       evidenceEnabled: true,
       evidenceProviderMode: "mcp-http",
       mcpAuthToken: "token",
-      mcpEndpoint: "http://127.0.0.1:3000/mcp",
+      mcpEndpoint: "http://127.0.0.1:23120/mcp",
       mcpToolArgumentsTemplate: '{"query":"{{query}}","max_results":3}',
       mcpToolName: "web_search",
     });
@@ -95,7 +95,7 @@ describe("settingsManager", () => {
     await expect(
       validateEvidenceSettings({
         evidenceProviderMode: "mcp-http",
-        mcpEndpoint: "http://127.0.0.1:3000/mcp",
+        mcpEndpoint: "http://127.0.0.1:23120/mcp",
         mcpToolArgumentsTemplate: '{"query":"{{query}}","max_results":5}',
         mcpToolName: "web_search",
       }),
@@ -106,7 +106,7 @@ describe("settingsManager", () => {
     await expect(
       validateEvidenceSettings({
         evidenceProviderMode: "mcp-http",
-        mcpEndpoint: "http://127.0.0.1:3000/mcp",
+        mcpEndpoint: "http://127.0.0.1:23120/mcp",
         mcpToolArgumentsTemplate: '{"query":',
         mcpToolName: "web_search",
       }),
@@ -220,7 +220,7 @@ describe("settingsManager", () => {
     });
   });
 
-  it("treats the default web verification mode as locally valid", async () => {
+  it("treats the default MCP verification mode as locally valid", async () => {
     await expect(validateEvidenceSettings()).resolves.toEqual({ valid: true });
   });
 });

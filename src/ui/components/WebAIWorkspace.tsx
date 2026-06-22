@@ -1,13 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
-import { FilePickerHelper } from "zotero-plugin-toolkit";
 import type { AssembledContext } from "../../services/contextAssembler";
-import { callMCPTool } from "../../services/mcpClient";
 import {
-  getAllPresets,
-  type CommandPreset,
-} from "../../services/presets";
-import {
-  getEvidenceSettingsIssue,
+  parseCustomPresets,
   type Settings,
 } from "../../services/settingsManager";
 import type { ScopeContext } from "../../types/scope";
@@ -15,26 +9,12 @@ import { getSidebarTheme } from "../theme";
 import { typography } from "../typography";
 
 type WebAIServiceId = "deepseek" | "zai";
-type PromptSourceMode = "paper" | "selection" | "imported-pdf" | "image";
+type PromptSourceMode = "paper" | "selection";
 
 interface WebAIService {
   id: WebAIServiceId;
   label: string;
   url: string;
-}
-
-interface ImportedPDFInput {
-  attachmentID?: number;
-  label: string;
-  path: string;
-}
-
-interface ImageInput {
-  label: string;
-  name: string;
-  previewURL?: string;
-  size: number;
-  type: string;
 }
 
 export interface IncomingWebPrompt {
@@ -56,10 +36,10 @@ interface WebAIWorkspaceProps {
 }
 
 interface WebAISkill {
-  description: string;
   id: string;
   label: string;
   promptPrefix: string;
+  slashCommand: string;
 }
 
 const PROMPT_TEXT_LIMIT = 60000;
@@ -76,75 +56,42 @@ const SERVICES: WebAIService[] = [
   },
 ];
 
-const WEB_ONLY_SKILLS: WebAISkill[] = [
-  {
-    id: "web-reading-note",
-    label: "Reading Note",
-    description: "Turn context into Zotero-ready notes",
-    promptPrefix:
-      "Create a Zotero-ready reading note in Chinese. Use concise sections: research question, methods, findings, limitations, reusable quotes or paraphrases, and follow-up questions. Separate paper evidence from your interpretation.",
-  },
-  {
-    id: "web-image",
-    label: "Image Input",
-    description: "Analyze a selected image with paper context",
-    promptPrefix:
-      "Analyze the image I upload together with the Zotero context. Identify visual content, relevant labels or data, links to the paper argument, and what should be saved as notes. If the image is a figure, explain the figure panel by panel.",
-  },
-  {
-    id: "web-mcp",
-    label: "MCP Evidence",
-    description: "Use MCP results as evidence inside the prompt",
-    promptPrefix:
-      "Use the MCP evidence and Zotero context below to answer carefully. Distinguish Zotero document facts, MCP evidence, and your own synthesis. List uncertainties and checks needed before citing.",
-  },
-  {
-    id: "web-deep-research",
-    label: "Deep Research",
-    description: "DeepSeek++ style research workflow",
-    promptPrefix:
-      "Act as a research copilot. Build a rigorous reading workflow: extract the core claim, reconstruct the argument, test the evidence, compare with neighboring literature, and propose the next searches or experiments. Keep the answer structured and concise.",
-  },
-];
-
 export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   contextSummary,
   customPresets = "",
   hostWindow,
   incomingPrompt,
   onIncomingPromptHandled,
-  onScopeRefresh,
-  settings,
   scope,
 }) => {
   const [service, setService] = useState<WebAIService>(SERVICES[0]);
   const [status, setStatus] = useState(`Loaded ${SERVICES[0].label}`);
   const [isError, setIsError] = useState(false);
-  const [noteDraft, setNoteDraft] = useState("");
-  const [userInstruction, setUserInstruction] = useState("");
-  const [selectedSkillID, setSelectedSkillID] = useState("summarize");
-  const [sourceMode, setSourceMode] = useState<PromptSourceMode>("paper");
-  const [promptDraft, setPromptDraft] = useState("");
-  const [importedPDF, setImportedPDF] = useState<ImportedPDFInput | null>(null);
-  const [imageInput, setImageInput] = useState<ImageInput | null>(null);
-  const [mcpEvidence, setMcpEvidence] = useState("");
-  const imageInputRef = useRef<HTMLInputElement>(null);
+  const [message, setMessage] = useState("");
+  const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
+  const [showCopiedPrompt, setShowCopiedPrompt] = useState(false);
+  const [copiedPrompt, setCopiedPrompt] = useState("");
   const frameHostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<Element | null>(null);
   const theme = getSidebarTheme(hostWindow);
 
-  const skills = useMemo(
-    () => buildWebAISkills(scope?.type || null, customPresets),
-    [customPresets, scope?.type],
+  const customSkills = useMemo(
+    () => buildCustomSkills(customPresets),
+    [customPresets],
   );
   const selectedSkill =
-    skills.find((skill) => skill.id === selectedSkillID) || skills[0];
+    customSkills.find((skill) => skill.id === selectedSkillID) || null;
+  const slashQuery = getSlashQuery(message);
+  const slashSuggestions = slashQuery
+    ? filterSlashSkills(customSkills, slashQuery.query)
+    : [];
+  const showSlashMenu = Boolean(slashQuery && slashSuggestions.length > 0);
 
   useEffect(() => {
-    if (selectedSkill && !skills.some((skill) => skill.id === selectedSkillID)) {
-      setSelectedSkillID(selectedSkill.id);
+    if (selectedSkillID && !customSkills.some((skill) => skill.id === selectedSkillID)) {
+      setSelectedSkillID(null);
     }
-  }, [selectedSkill, selectedSkillID, skills]);
+  }, [customSkills, selectedSkillID]);
 
   useEffect(() => {
     const host = frameHostRef.current;
@@ -156,7 +103,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     const frame = createWebFrame(host.ownerDocument || hostWindow.document, service.url);
     frameRef.current = frame;
     host.appendChild(frame);
-    setStatus(`Loaded ${service.label}. Sign in here, then paste copied prompts into the page.`);
+    setStatus(`Loaded ${service.label}. Sign in, then paste copied prompts into the web chat.`);
     setIsError(false);
 
     return () => {
@@ -176,157 +123,67 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       return;
     }
 
-    setPromptDraft(incomingPrompt.prompt);
-    setUserInstruction(incomingPrompt.prompt);
-    setSourceMode(incomingPrompt.sourceMode || "selection");
-    setStatus(`${incomingPrompt.label} is ready. Copy it into ${service.label}.`);
+    setMessage(incomingPrompt.prompt);
+    setSelectedSkillID(null);
+    setStatus(`${incomingPrompt.label} is ready. Send copies it into ${service.label}.`);
     setIsError(false);
     onIncomingPromptHandled?.(incomingPrompt.id);
   }, [incomingPrompt, onIncomingPromptHandled, service.label]);
 
-  useEffect(() => {
-    return () => {
-      if (imageInput?.previewURL) {
-        URL.revokeObjectURL(imageInput.previewURL);
-      }
-    };
-  }, [imageInput?.previewURL]);
+  const copyPrompt = (prompt: string) => {
+    copyTextToClipboard(prompt);
+    focusFrame(frameRef.current);
+    setCopiedPrompt(prompt);
+    setShowCopiedPrompt(false);
+    setStatus(`Prompt copied (${prompt.length} characters). Paste it into ${service.label}.`);
+    setIsError(false);
+  };
 
-  const runAction = async (action: () => Promise<void> | void) => {
+  const runAction = (action: () => void) => {
     try {
-      await action();
+      action();
     } catch (error) {
-      const message =
+      const errorMessage =
         error instanceof Error && error.message ? error.message : String(error);
-      setStatus(`Failed: ${message}`);
+      setStatus(`Failed: ${errorMessage}`);
       setIsError(true);
       ztoolkit.log("Web AI action failed:", error);
     }
   };
 
-  const copyPrompt = async (prompt: string) => {
-    copyTextToClipboard(prompt);
-    focusFrame(frameRef.current);
-    setPromptDraft(prompt);
-    setStatus(`Prompt copied (${prompt.length} characters). Paste it into ${service.label}.`);
+  const chooseSkill = (skill: WebAISkill) => {
+    setSelectedSkillID(skill.id);
+    setMessage(removeSlashToken(message).trimStart());
+    setStatus(`Skill /${skill.slashCommand} selected. Write your question and send.`);
     setIsError(false);
   };
 
-  const buildAndCopyPrompt = async (mode = sourceMode) => {
+  const sendPrompt = () => {
+    const resolved = resolveSkillFromMessage(message, customSkills, selectedSkill);
+    if (resolved.skill && resolved.skill.id !== selectedSkillID) {
+      setSelectedSkillID(resolved.skill.id);
+    }
     const prompt = buildWorkspacePrompt({
       contextSummary,
-      imageInput,
-      importedPDF,
-      mcpEvidence,
+      message: resolved.message,
       scope,
-      selectedSkill,
-      sourceMode: mode,
-      userInstruction,
+      selectedSkill: resolved.skill,
     });
-    await copyPrompt(prompt);
+    copyPrompt(prompt);
   };
 
-  const handleImportPDF = async () => {
-    const selectedPath = await pickPDFPath(hostWindow);
-    if (!selectedPath) {
-      setStatus("PDF import cancelled.");
-      setIsError(false);
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
+      event.preventDefault();
+      runAction(sendPrompt);
       return;
     }
 
-    const parentItem = resolveParentItem(scope);
-    const options: {
-      contentType: string;
-      file: nsIFile | string;
-      libraryID?: number;
-      parentItemID?: number;
-      title: string;
-    } = {
-      contentType: "application/pdf",
-      file: selectedPath,
-      title: getFileName(selectedPath),
-    };
-    if (parentItem?.id) {
-      options.parentItemID = parentItem.id;
-    } else {
-      const libraryID = getSelectedLibraryID();
-      if (libraryID) {
-        options.libraryID = libraryID;
-      }
+    if (event.key === "Enter" && showSlashMenu && slashSuggestions[0]) {
+      event.preventDefault();
+      chooseSkill(slashSuggestions[0]);
     }
-
-    const attachment = await Zotero.Attachments.importFromFile(options);
-    const label = attachment.getDisplayTitle?.() || getFileName(selectedPath);
-    setImportedPDF({
-      attachmentID: attachment.id,
-      label,
-      path: selectedPath,
-    });
-    setSourceMode("imported-pdf");
-    onScopeRefresh?.();
-    setStatus(`Imported PDF: ${label}. Build a prompt or open it in Zotero for full-text context.`);
-    setIsError(false);
   };
-
-  const handleImageInput = (event: React.ChangeEvent<HTMLInputElement>) => {
-    const file = event.currentTarget.files?.[0];
-    if (!file) {
-      return;
-    }
-    if (imageInput?.previewURL) {
-      URL.revokeObjectURL(imageInput.previewURL);
-    }
-    const previewURL = URL.createObjectURL(file);
-    setImageInput({
-      label: getBrowserFileLabel(file),
-      name: file.name,
-      previewURL,
-      size: file.size,
-      type: file.type || "image/*",
-    });
-    setSourceMode("image");
-    setSelectedSkillID("web-image");
-    setStatus("Image selected. Upload it in the web chat if the embedded page asks for a file.");
-    setIsError(false);
-  };
-
-  const handleMCPFetch = async () => {
-    const issue = getEvidenceSettingsIssue(settings);
-    if (settings.evidenceProviderMode !== "mcp-http" || issue) {
-      throw new Error(issue || "Select MCP HTTP in Zotero-WebAI settings first.");
-    }
-    const query =
-      userInstruction.trim() ||
-      scope?.selectedText?.trim() ||
-      contextSummary?.metadata?.split("\n")[0]?.trim() ||
-      scope?.label ||
-      "";
-    if (!query) {
-      throw new Error("Write a question or select text before calling MCP.");
-    }
-
-    const results = await callMCPTool(settings, query);
-    const evidence = results
-      .map((item, index) =>
-        [
-          `Result ${index + 1}: ${item.title || "MCP result"}`,
-          item.source ? `Source: ${item.source}` : "",
-          item.url ? `URL: ${item.url}` : "",
-          item.content ? `Content: ${item.content}` : "",
-        ]
-          .filter(Boolean)
-          .join("\n"),
-      )
-      .join("\n\n");
-    setMcpEvidence(evidence || "MCP returned no text content.");
-    setSelectedSkillID("web-mcp");
-    setStatus(`MCP evidence loaded (${results.length} result${results.length === 1 ? "" : "s"}).`);
-    setIsError(false);
-  };
-
-  const selectedText =
-    scope?.selectedText?.trim() || contextSummary?.selectedText?.trim() || "";
-  const hasPDFContext = Boolean(contextSummary?.fullText || contextSummary?.metadata);
 
   return (
     <section
@@ -336,276 +193,6 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         color: theme.text,
       }}
     >
-      <div style={styles.serviceBar}>
-        {SERVICES.map((candidate) => (
-          <button
-            key={candidate.id}
-            style={{
-              ...styles.serviceButton,
-              background:
-                candidate.id === service.id
-                  ? theme.badgeBackground
-                  : theme.surfaceBackground,
-              borderColor:
-                candidate.id === service.id ? theme.badgeBorder : theme.buttonBorder,
-              color: candidate.id === service.id ? theme.badgeText : theme.buttonText,
-            }}
-            onClick={() => setService(candidate)}
-            type="button"
-          >
-            {candidate.label}
-          </button>
-        ))}
-      </div>
-
-      <div style={styles.utilityBar}>
-        <button
-          style={{
-            ...styles.button,
-            background: theme.surfaceBackground,
-            borderColor: theme.buttonBorder,
-            color: theme.buttonText,
-          }}
-          onClick={() => runAction(() => loadFrameElement(frameRef.current, service.url))}
-          type="button"
-        >
-          Reload
-        </button>
-        <button
-          style={{
-            ...styles.button,
-            background: theme.surfaceBackground,
-            borderColor: theme.buttonBorder,
-            color: theme.buttonText,
-          }}
-          onClick={() => openExternalURL(service.url)}
-          type="button"
-        >
-          Open External
-        </button>
-        <button
-          style={{
-            ...styles.button,
-            background: theme.surfaceBackground,
-            borderColor: theme.buttonBorder,
-            color: theme.buttonText,
-          }}
-          onClick={() => runAction(handleImportPDF)}
-          type="button"
-        >
-          Import PDF
-        </button>
-        <button
-          style={{
-            ...styles.button,
-            background: theme.surfaceBackground,
-            borderColor: theme.buttonBorder,
-            color: theme.buttonText,
-          }}
-          onClick={() => imageInputRef.current?.click()}
-          type="button"
-        >
-          Image
-        </button>
-        <input
-          ref={imageInputRef}
-          accept="image/*"
-          onChange={handleImageInput}
-          style={{ display: "none" }}
-          type="file"
-        />
-      </div>
-
-      <div
-        style={{
-          ...styles.promptPanel,
-          background: theme.surfaceBackground,
-          borderColor: theme.softBorder,
-        }}
-      >
-        <div style={styles.promptRow}>
-          <label style={{ ...styles.fieldLabel, color: theme.mutedText }}>
-            Skill
-            <select
-              onChange={(event) => setSelectedSkillID(event.target.value)}
-              style={{
-                ...styles.select,
-                background: theme.inputBackground,
-                borderColor: theme.inputBorder,
-                color: theme.text,
-              }}
-              value={selectedSkill?.id || ""}
-            >
-              {skills.map((skill) => (
-                <option key={skill.id} value={skill.id}>
-                  {skill.label}
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={{ ...styles.fieldLabel, color: theme.mutedText }}>
-            Input
-            <select
-              onChange={(event) =>
-                setSourceMode(event.target.value as PromptSourceMode)
-              }
-              style={{
-                ...styles.select,
-                background: theme.inputBackground,
-                borderColor: theme.inputBorder,
-                color: theme.text,
-              }}
-              value={sourceMode}
-            >
-              <option value="paper">PDF / paper context</option>
-              <option value="selection">Selected text</option>
-              <option value="imported-pdf">Imported PDF</option>
-              <option value="image">Image</option>
-            </select>
-          </label>
-        </div>
-
-        <div style={{ ...styles.skillHint, color: theme.mutedText }}>
-          {selectedSkill?.description || "Choose a reusable prompt workflow."}
-        </div>
-
-        <textarea
-          style={{
-            ...styles.promptInput,
-            background: theme.inputBackground,
-            borderColor: theme.inputBorder,
-            color: theme.text,
-          }}
-          onChange={(event) => setUserInstruction(event.target.value)}
-          placeholder="Write your question, reading goal, or extra instruction. Reader selected text will also appear here after you use the popup."
-          value={userInstruction}
-        />
-
-        <div style={styles.actionBar}>
-          <button
-            disabled={!hasPDFContext && sourceMode === "paper"}
-            style={{
-              ...styles.button,
-              ...(sourceMode === "paper" ? styles.activeButton : null),
-              background: theme.surfaceBackground,
-              borderColor: theme.buttonBorder,
-              color: theme.buttonText,
-            }}
-            onClick={() => runAction(() => buildAndCopyPrompt("paper"))}
-            type="button"
-          >
-            Copy PDF Prompt
-          </button>
-          <button
-            disabled={!selectedText}
-            style={{
-              ...styles.button,
-              ...(sourceMode === "selection" ? styles.activeButton : null),
-              background: theme.surfaceBackground,
-              borderColor: theme.buttonBorder,
-              color: theme.buttonText,
-            }}
-            onClick={() => runAction(() => buildAndCopyPrompt("selection"))}
-            type="button"
-          >
-            Copy Selection
-          </button>
-          <button
-            disabled={!importedPDF}
-            style={{
-              ...styles.button,
-              ...(sourceMode === "imported-pdf" ? styles.activeButton : null),
-              background: theme.surfaceBackground,
-              borderColor: theme.buttonBorder,
-              color: theme.buttonText,
-            }}
-            onClick={() => runAction(() => buildAndCopyPrompt("imported-pdf"))}
-            type="button"
-          >
-            Copy Imported PDF
-          </button>
-          <button
-            disabled={!imageInput}
-            style={{
-              ...styles.button,
-              ...(sourceMode === "image" ? styles.activeButton : null),
-              background: theme.surfaceBackground,
-              borderColor: theme.buttonBorder,
-              color: theme.buttonText,
-            }}
-            onClick={() => runAction(() => buildAndCopyPrompt("image"))}
-            type="button"
-          >
-            Copy Image Prompt
-          </button>
-          <button
-            style={{
-              ...styles.button,
-              background: theme.surfaceBackground,
-              borderColor: theme.buttonBorder,
-              color: theme.buttonText,
-            }}
-            onClick={() => runAction(handleMCPFetch)}
-            type="button"
-          >
-            MCP
-          </button>
-        </div>
-
-        {(importedPDF || imageInput || mcpEvidence) && (
-          <div style={styles.sourceList}>
-            {importedPDF && (
-              <div style={{ ...styles.sourceChip, borderColor: theme.softBorder }}>
-                PDF: {importedPDF.label}
-              </div>
-            )}
-            {imageInput && (
-              <div style={{ ...styles.sourceChip, borderColor: theme.softBorder }}>
-                Image: {imageInput.name}
-              </div>
-            )}
-            {mcpEvidence && (
-              <div style={{ ...styles.sourceChip, borderColor: theme.softBorder }}>
-                MCP evidence loaded
-              </div>
-            )}
-          </div>
-        )}
-
-        {imageInput?.previewURL && (
-          <img
-            alt={imageInput.name}
-            src={imageInput.previewURL}
-            style={{
-              ...styles.imagePreview,
-              borderColor: theme.softBorder,
-            }}
-          />
-        )}
-
-        {promptDraft && (
-          <textarea
-            readOnly
-            style={{
-              ...styles.generatedPrompt,
-              background: theme.inputBackground,
-              borderColor: theme.inputBorder,
-              color: theme.text,
-            }}
-            value={promptDraft}
-          />
-        )}
-      </div>
-
-      <div
-        style={{
-          ...styles.status,
-          color: isError ? theme.errorText : theme.mutedText,
-        }}
-      >
-        {status}
-      </div>
-
       <div
         ref={frameHostRef}
         style={{
@@ -615,86 +202,247 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         }}
       />
 
-      <div style={styles.noteBox}>
-        <textarea
-          style={{
-            ...styles.noteDraft,
-            background: theme.inputBackground,
-            borderColor: theme.inputBorder,
-            color: theme.text,
-          }}
-          onChange={(event) => setNoteDraft(event.target.value)}
-          placeholder="Paste or write the useful web answer here, then save it as a Zotero child note."
-          value={noteDraft}
-        />
-        <div style={styles.noteActions}>
+      <div style={styles.frameToolbar}>
+        <div style={styles.serviceBar}>
+          {SERVICES.map((candidate) => (
+            <button
+              key={candidate.id}
+              style={{
+                ...styles.serviceButton,
+                background:
+                  candidate.id === service.id
+                    ? theme.badgeBackground
+                    : theme.surfaceBackground,
+                borderColor:
+                  candidate.id === service.id ? theme.badgeBorder : theme.buttonBorder,
+                color: candidate.id === service.id ? theme.badgeText : theme.buttonText,
+              }}
+              onClick={() => setService(candidate)}
+              type="button"
+            >
+              {candidate.label}
+            </button>
+          ))}
+        </div>
+        <div style={styles.frameActions}>
           <button
             style={{
-              ...styles.button,
+              ...styles.miniButton,
               background: theme.surfaceBackground,
               borderColor: theme.buttonBorder,
               color: theme.buttonText,
             }}
             onClick={() =>
-              runAction(async () => {
-                await saveDraftNote(scope, service.label, noteDraft, {
-                  image: imageInput?.label,
-                  importedPDF: importedPDF?.label,
-                });
-                setStatus("Saved to Zotero note.");
-                setIsError(false);
-              })
+              runAction(() => loadFrameElement(frameRef.current, service.url))
             }
             type="button"
           >
-            Save Note
+            Reload
           </button>
           <button
             style={{
-              ...styles.button,
+              ...styles.miniButton,
               background: theme.surfaceBackground,
               borderColor: theme.buttonBorder,
               color: theme.buttonText,
             }}
-            onClick={() => setNoteDraft("")}
+            onClick={() => openExternalURL(service.url)}
             type="button"
           >
-            Clear
+            Open External
           </button>
         </div>
+      </div>
+
+      <div
+        style={{
+          ...styles.composerPanel,
+          background: theme.surfaceBackground,
+          borderColor: theme.softBorder,
+        }}
+      >
+        {showSlashMenu && (
+          <div
+            style={{
+              ...styles.slashMenu,
+              background: theme.surfaceBackground,
+              borderColor: theme.softBorder,
+            }}
+          >
+            {slashSuggestions.map((skill) => (
+              <button
+                key={skill.id}
+                style={{
+                  ...styles.skillOption,
+                  color: theme.text,
+                }}
+                onMouseDown={(event) => event.preventDefault()}
+                onClick={() => chooseSkill(skill)}
+                type="button"
+              >
+                <span style={styles.skillOptionTitle}>{skill.label}</span>
+                <span style={{ ...styles.skillOptionCommand, color: theme.mutedText }}>
+                  /{skill.slashCommand}
+                </span>
+              </button>
+            ))}
+          </div>
+        )}
+
+        {selectedSkill && (
+          <button
+            style={{
+              ...styles.selectedSkill,
+              background: theme.badgeBackground,
+              borderColor: theme.badgeBorder,
+              color: theme.badgeText,
+            }}
+            onClick={() => setSelectedSkillID(null)}
+            title="Clear selected skill"
+            type="button"
+          >
+            /{selectedSkill.slashCommand} {selectedSkill.label}
+          </button>
+        )}
+
+        <textarea
+          onChange={(event) => setMessage(event.target.value)}
+          onKeyDown={handleKeyDown}
+          placeholder="输入消息，或输入 / 选择自定义 Skill"
+          style={{
+            ...styles.composerInput,
+            background: "transparent",
+            color: theme.text,
+          }}
+          value={message}
+        />
+
+        <div style={styles.composerFooter}>
+          <div
+            style={{
+              ...styles.status,
+              color: isError ? theme.errorText : theme.mutedText,
+            }}
+          >
+            {customSkills.length
+              ? status
+              : "Open settings to add custom skills, then type / here."}
+          </div>
+          <button
+            style={{
+              ...styles.sendButton,
+              background: theme.badgeBackground,
+              borderColor: theme.badgeBorder,
+              color: theme.badgeText,
+            }}
+            onClick={() => runAction(sendPrompt)}
+            title="Copy prompt and focus the web chat"
+            type="button"
+          >
+            Send
+          </button>
+        </div>
+
+        {copiedPrompt && (
+          <button
+            style={{
+              ...styles.previewToggle,
+              color: theme.buttonText,
+            }}
+            onClick={() => setShowCopiedPrompt((value) => !value)}
+            type="button"
+          >
+            {showCopiedPrompt ? "Hide copied prompt" : "Show copied prompt"}
+          </button>
+        )}
+
+        {copiedPrompt && showCopiedPrompt && (
+          <textarea
+            readOnly
+            style={{
+              ...styles.generatedPrompt,
+              background: theme.inputBackground,
+              borderColor: theme.inputBorder,
+              color: theme.text,
+            }}
+            value={copiedPrompt}
+          />
+        )}
       </div>
     </section>
   );
 };
 
-function buildWebAISkills(
-  scopeType: ScopeContext["type"] | null,
-  customPresetsValue: string,
-): WebAISkill[] {
-  const presets = getAllPresets(customPresetsValue)
-    .filter((preset) => isPresetVisibleForScope(preset, scopeType))
-    .map((preset) => ({
-      description: preset.description,
-      id: preset.id,
-      label: preset.label,
-      promptPrefix: preset.promptPrefix,
-    }));
-
-  const byID = new Map<string, WebAISkill>();
-  for (const skill of [...presets, ...WEB_ONLY_SKILLS]) {
-    byID.set(skill.id, skill);
-  }
-  return Array.from(byID.values());
+function buildCustomSkills(customPresetsValue: string): WebAISkill[] {
+  return parseCustomPresets(customPresetsValue).presets
+    .filter((preset) => preset.label?.trim() && preset.promptPrefix?.trim())
+    .map((preset) => {
+      const label = String(preset.label || preset.id).trim();
+      return {
+        id: preset.id,
+        label,
+        promptPrefix: String(preset.promptPrefix || "").trim(),
+        slashCommand: normalizeSlashCommand(
+          preset.slashCommand || preset.label || preset.id,
+        ),
+      };
+    });
 }
 
-function isPresetVisibleForScope(
-  preset: CommandPreset,
-  scopeType: ScopeContext["type"] | null,
-): boolean {
-  if (!scopeType || !preset.scopeHint) {
-    return true;
+function filterSlashSkills(skills: WebAISkill[], query: string): WebAISkill[] {
+  const normalized = normalizeSlashCommand(query).toLowerCase();
+  if (!normalized) {
+    return skills.slice(0, 8);
   }
-  return preset.scopeHint.includes(scopeType);
+
+  return skills
+    .filter((skill) =>
+      [skill.label, skill.slashCommand, skill.id]
+        .join(" ")
+        .toLowerCase()
+        .includes(normalized),
+    )
+    .slice(0, 8);
+}
+
+function getSlashQuery(value: string): { query: string } | null {
+  const match = value.match(/^\s*\/([^\s]*)$/);
+  return match ? { query: match[1] || "" } : null;
+}
+
+function removeSlashToken(value: string): string {
+  return value.replace(/^\s*\/[^\s]*(?:\s+)?/, "");
+}
+
+function resolveSkillFromMessage(
+  value: string,
+  skills: WebAISkill[],
+  selectedSkill: WebAISkill | null,
+): { message: string; skill: WebAISkill | null } {
+  const match = value.match(/^\s*\/([^\s]+)(?:\s+([\s\S]*))?$/);
+  if (!match) {
+    return { message: value, skill: selectedSkill };
+  }
+
+  const command = normalizeSlashCommand(match[1] || "");
+  const matchedSkill =
+    skills.find(
+      (skill) =>
+        skill.slashCommand.toLowerCase() === command.toLowerCase() ||
+        skill.id.toLowerCase() === command.toLowerCase() ||
+        skill.label.toLowerCase() === command.toLowerCase(),
+    ) || selectedSkill;
+  return {
+    message: match[2] || "",
+    skill: matchedSkill,
+  };
+}
+
+function normalizeSlashCommand(value: string): string {
+  return String(value || "")
+    .trim()
+    .replace(/^\/+/, "")
+    .replace(/\s+/g, "");
 }
 
 function createWebFrame(doc: Document, url: string): Element {
@@ -794,25 +542,18 @@ function openExternalURL(url: string): void {
 
 function buildWorkspacePrompt({
   contextSummary,
-  imageInput,
-  importedPDF,
-  mcpEvidence,
+  message,
   scope,
   selectedSkill,
-  sourceMode,
-  userInstruction,
 }: {
   contextSummary: AssembledContext | null;
-  imageInput: ImageInput | null;
-  importedPDF: ImportedPDFInput | null;
-  mcpEvidence: string;
+  message: string;
   scope: ScopeContext | null;
-  selectedSkill: WebAISkill | undefined;
-  sourceMode: PromptSourceMode;
-  userInstruction: string;
+  selectedSkill: WebAISkill | null;
 }): string {
-  if (!selectedSkill) {
-    throw new Error("No skill is available.");
+  const instruction = message.trim();
+  if (!selectedSkill && !instruction) {
+    throw new Error("Write a message or choose a custom skill with /.");
   }
 
   const title = scope?.label || "Current Zotero context";
@@ -820,59 +561,16 @@ function buildWorkspacePrompt({
   const selectedText =
     scope?.selectedText?.trim() || contextSummary?.selectedText?.trim() || "";
   const fullText = truncateText(contextSummary?.fullText || "", PROMPT_TEXT_LIMIT);
-  const instruction = userInstruction.trim();
   const parts = [
-    selectedSkill.promptPrefix,
-    instruction ? `My instruction:\n${instruction}` : "",
+    selectedSkill
+      ? `Skill: ${selectedSkill.label}\n${selectedSkill.promptPrefix}`
+      : "",
+    instruction ? `User message:\n${instruction}` : "",
     `Zotero context:\n${title}`,
     metadata ? `Metadata:\n${metadata}` : "",
+    selectedText ? `Selected passage:\n${selectedText}` : "",
+    fullText ? `Paper content:\n${fullText}` : "",
   ];
-
-  if (sourceMode === "selection") {
-    if (!selectedText) {
-      throw new Error("Select text in the Zotero PDF reader first.");
-    }
-    parts.push(`Selected passage:\n${selectedText}`);
-  } else if (sourceMode === "imported-pdf") {
-    if (!importedPDF) {
-      throw new Error("Import a PDF first.");
-    }
-    parts.push(
-      [
-        "Imported PDF input:",
-        `Title: ${importedPDF.label}`,
-        `Local path: ${importedPDF.path}`,
-        importedPDF.attachmentID
-          ? `Zotero attachment itemID: ${importedPDF.attachmentID}`
-          : "",
-        "If you cannot access local files directly, ask me to upload the PDF in the web chat and then analyze it with the Zotero context.",
-      ]
-        .filter(Boolean)
-        .join("\n"),
-    );
-  } else if (sourceMode === "image") {
-    if (!imageInput) {
-      throw new Error("Choose an image first.");
-    }
-    parts.push(
-      [
-        "Image input:",
-        `File: ${imageInput.label}`,
-        `Type: ${imageInput.type}`,
-        `Size: ${Math.round(imageInput.size / 1024)} KB`,
-        "I will upload or paste the image in the web chat. Analyze the image together with the Zotero context.",
-      ].join("\n"),
-    );
-  } else {
-    if (!fullText && !metadata) {
-      throw new Error("No readable paper context is available yet.");
-    }
-    parts.push(fullText ? `Paper content:\n${fullText}` : "");
-  }
-
-  if (mcpEvidence) {
-    parts.push(`MCP evidence:\n${mcpEvidence}`);
-  }
 
   if (contextSummary?.fullText && contextSummary.fullText.length > fullText.length) {
     parts.push(
@@ -881,140 +579,6 @@ function buildWorkspacePrompt({
   }
 
   return parts.filter(Boolean).join("\n\n");
-}
-
-async function pickPDFPath(hostWindow: Window): Promise<string | null> {
-  const filters: [string, string][] = [["PDF (*.pdf)", "*.pdf"]];
-  try {
-    const selected = await new FilePickerHelper(
-      "Import PDF into Zotero-WebAI",
-      "open",
-      filters,
-      "",
-      hostWindow,
-    ).open();
-    return normalizeFilePickerSelection(selected);
-  } catch (error) {
-    ztoolkit.log("Native PDF file picker failed:", error);
-  }
-
-  return null;
-}
-
-function normalizeFilePickerSelection(selection: unknown): string | null {
-  if (typeof selection === "string") {
-    return selection || null;
-  }
-  if (
-    selection &&
-    typeof selection === "object" &&
-    "path" in selection &&
-    typeof (selection as { path?: unknown }).path === "string"
-  ) {
-    return (selection as { path: string }).path || null;
-  }
-  return null;
-}
-
-function getSelectedLibraryID(): number | undefined {
-  const pane = Zotero.getActiveZoteroPane?.() as
-    | { getSelectedLibraryID?: () => number }
-    | undefined;
-  return pane?.getSelectedLibraryID?.() || Zotero.Libraries.userLibraryID;
-}
-
-function resolveParentItem(scope: ScopeContext | null): Zotero.Item | null {
-  if (!scope) {
-    return null;
-  }
-
-  if (scope.readerAttachmentId) {
-    const attachment = Zotero.Items.get(scope.readerAttachmentId);
-    return attachment?.parentItem || attachment || null;
-  }
-
-  const firstItemID = scope.itemIds[0];
-  if (!firstItemID) {
-    return null;
-  }
-
-  const item = Zotero.Items.get(firstItemID);
-  if (!item) {
-    return null;
-  }
-
-  if (item.isAttachment?.()) {
-    return item.parentItem || item;
-  }
-
-  return item;
-}
-
-async function saveDraftNote(
-  scope: ScopeContext | null,
-  serviceLabel: string,
-  draft: string,
-  inputs: { image?: string; importedPDF?: string },
-): Promise<void> {
-  const noteText = draft.trim();
-  if (!noteText) {
-    throw new Error("Note draft is empty.");
-  }
-
-  const parentItem = resolveParentItem(scope);
-  if (!parentItem) {
-    throw new Error("Open a PDF or select one paper before saving a note.");
-  }
-
-  const title = parentItem.getDisplayTitle?.() || scope?.label || "Web AI note";
-  const note = new Zotero.Item("note");
-  note.parentID = parentItem.id;
-  note.setNote(buildNoteHTML(title, serviceLabel, noteText, inputs));
-  note.addTag("Web AI");
-  note.addTag(serviceLabel);
-  await note.saveTx();
-}
-
-function buildNoteHTML(
-  title: string,
-  serviceLabel: string,
-  draft: string,
-  inputs: { image?: string; importedPDF?: string },
-): string {
-  const paragraphs = draft
-    .split(/\n{2,}/)
-    .map((paragraph) => paragraph.trim())
-    .filter(Boolean)
-    .map((paragraph) => `<p>${escapeHTML(paragraph).replace(/\n/g, "<br/>")}</p>`)
-    .join("");
-
-  return [
-    `<h1>Zotero-WebAI Note - ${escapeHTML(title)}</h1>`,
-    `<p><strong>Service:</strong> ${escapeHTML(serviceLabel)}</p>`,
-    inputs.importedPDF
-      ? `<p><strong>Imported PDF:</strong> ${escapeHTML(inputs.importedPDF)}</p>`
-      : "",
-    inputs.image ? `<p><strong>Image:</strong> ${escapeHTML(inputs.image)}</p>` : "",
-    paragraphs,
-  ].join("");
-}
-
-function getBrowserFileLabel(file: File): string {
-  const path = (file as File & { mozFullPath?: string }).mozFullPath;
-  return path || file.name;
-}
-
-function getFileName(path: string): string {
-  return path.split(/[\\/]/).filter(Boolean).pop() || path;
-}
-
-function escapeHTML(value: string): string {
-  return value
-    .replace(/&/g, "&amp;")
-    .replace(/</g, "&lt;")
-    .replace(/>/g, "&gt;")
-    .replace(/"/g, "&quot;")
-    .replace(/'/g, "&#39;");
 }
 
 function truncateText(text: string, limit: number): string {
@@ -1053,169 +617,186 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     width: "100%",
   },
-  serviceBar: {
-    display: "grid",
+  frameHost: {
+    border: "1px solid #e0e0e0",
+    borderRadius: "6px",
+    display: "flex",
+    flex: "1 1 460px",
+    minHeight: "360px",
+    minWidth: 0,
+    overflow: "hidden",
+  },
+  frameToolbar: {
+    alignItems: "center",
+    display: "flex",
+    flex: "0 0 auto",
+    flexWrap: "wrap",
     gap: "6px",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
+    justifyContent: "space-between",
+    minWidth: 0,
+  },
+  serviceBar: {
+    display: "flex",
+    flex: "1 1 180px",
+    flexWrap: "wrap",
+    gap: "6px",
+    minWidth: 0,
   },
   serviceButton: {
     appearance: "none",
     border: "1px solid #c9c9c9",
-    borderRadius: "4px",
+    borderRadius: "16px",
     cursor: "pointer",
     fontSize: typography.label,
     fontWeight: 600,
-    minHeight: "30px",
-    padding: "4px 8px",
-    whiteSpace: "normal",
+    minHeight: "28px",
+    padding: "4px 10px",
+    whiteSpace: "nowrap",
   },
-  utilityBar: {
-    display: "grid",
+  frameActions: {
+    display: "flex",
+    flexWrap: "wrap",
     gap: "6px",
-    gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
   },
-  promptPanel: {
+  miniButton: {
+    appearance: "none",
+    border: "1px solid #c9c9c9",
+    borderRadius: "14px",
+    cursor: "pointer",
+    fontSize: typography.label,
+    fontWeight: 500,
+    minHeight: "26px",
+    padding: "3px 9px",
+    whiteSpace: "nowrap",
+  },
+  composerPanel: {
     border: "1px solid #e0e0e0",
-    borderRadius: "6px",
+    borderRadius: "20px",
     display: "flex",
     flex: "0 0 auto",
     flexDirection: "column",
     gap: "7px",
-    padding: "8px",
+    padding: "10px 12px",
+    position: "relative",
   },
-  promptRow: {
-    display: "grid",
-    gap: "6px",
-    gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-  },
-  fieldLabel: {
+  slashMenu: {
+    border: "1px solid #e0e0e0",
+    borderRadius: "10px",
+    bottom: "calc(100% + 6px)",
+    boxShadow: "0 8px 24px rgba(0, 0, 0, 0.12)",
+    boxSizing: "border-box",
     display: "flex",
     flexDirection: "column",
-    fontSize: typography.meta,
-    fontWeight: 600,
-    gap: "4px",
-    lineHeight: 1.3,
-    minWidth: 0,
+    left: "10px",
+    maxHeight: "220px",
+    overflow: "auto",
+    padding: "6px",
+    position: "absolute",
+    right: "10px",
+    zIndex: 2,
   },
-  select: {
-    border: "1px solid #d4d4d4",
-    borderRadius: "4px",
-    boxSizing: "border-box",
-    font: "inherit",
-    minHeight: "30px",
-    padding: "4px 6px",
+  skillOption: {
+    alignItems: "center",
+    appearance: "none",
+    background: "transparent",
+    border: 0,
+    borderRadius: "8px",
+    cursor: "pointer",
+    display: "flex",
+    gap: "8px",
+    justifyContent: "space-between",
+    minHeight: "32px",
+    padding: "6px 8px",
+    textAlign: "left",
     width: "100%",
   },
-  skillHint: {
-    fontSize: typography.meta,
-    lineHeight: 1.35,
-    overflowWrap: "anywhere",
+  skillOptionTitle: {
+    fontSize: typography.body,
+    fontWeight: 600,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
-  promptInput: {
-    border: "1px solid #d4d4d4",
-    borderRadius: "4px",
+  skillOptionCommand: {
+    flexShrink: 0,
+    fontSize: typography.meta,
+  },
+  selectedSkill: {
+    alignSelf: "flex-start",
+    appearance: "none",
+    border: "1px solid #d6e5f4",
+    borderRadius: "14px",
+    cursor: "pointer",
+    fontSize: typography.label,
+    fontWeight: 600,
+    maxWidth: "100%",
+    overflow: "hidden",
+    padding: "3px 8px",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  composerInput: {
+    border: 0,
     boxSizing: "border-box",
     font: "inherit",
     fontSize: typography.body,
     lineHeight: 1.45,
-    minHeight: "62px",
-    padding: "7px 8px",
+    maxHeight: "180px",
+    minHeight: "48px",
+    outline: "none",
+    padding: "2px 0",
     resize: "vertical",
     width: "100%",
   },
-  actionBar: {
-    display: "grid",
-    gap: "6px",
-    gridTemplateColumns: "repeat(5, minmax(0, 1fr))",
-  },
-  button: {
-    appearance: "none",
-    border: "1px solid #c9c9c9",
-    borderRadius: "4px",
-    cursor: "pointer",
-    fontSize: typography.label,
-    fontWeight: 500,
-    lineHeight: 1.25,
-    minHeight: "28px",
-    minWidth: 0,
-    padding: "4px 7px",
-    whiteSpace: "normal",
-  },
-  activeButton: {
-    fontWeight: 700,
-  },
-  sourceList: {
+  composerFooter: {
+    alignItems: "center",
     display: "flex",
-    flexWrap: "wrap",
-    gap: "6px",
+    gap: "8px",
+    justifyContent: "space-between",
+    minWidth: 0,
   },
-  sourceChip: {
-    border: "1px solid #d4d4d4",
-    borderRadius: "4px",
+  status: {
+    flex: "1 1 auto",
     fontSize: typography.meta,
-    lineHeight: 1.3,
-    maxWidth: "100%",
+    lineHeight: 1.35,
+    minHeight: "18px",
+    minWidth: 0,
+    overflow: "hidden",
     overflowWrap: "anywhere",
-    padding: "3px 6px",
+    textOverflow: "ellipsis",
   },
-  imagePreview: {
+  sendButton: {
+    appearance: "none",
+    border: "1px solid #d6e5f4",
+    borderRadius: "999px",
+    cursor: "pointer",
+    flex: "0 0 auto",
+    fontSize: typography.label,
+    fontWeight: 700,
+    minHeight: "34px",
+    minWidth: "64px",
+    padding: "5px 14px",
+  },
+  previewToggle: {
     alignSelf: "flex-start",
-    border: "1px solid #d4d4d4",
-    borderRadius: "4px",
-    maxHeight: "120px",
-    maxWidth: "100%",
-    objectFit: "contain",
+    appearance: "none",
+    background: "transparent",
+    border: 0,
+    cursor: "pointer",
+    fontSize: typography.meta,
+    padding: 0,
   },
   generatedPrompt: {
     border: "1px solid #d4d4d4",
-    borderRadius: "4px",
+    borderRadius: "8px",
     boxSizing: "border-box",
     font: "inherit",
     fontSize: typography.meta,
     lineHeight: 1.4,
-    maxHeight: "130px",
+    maxHeight: "150px",
     minHeight: "76px",
     padding: "7px 8px",
     resize: "vertical",
     width: "100%",
-  },
-  status: {
-    fontSize: typography.meta,
-    lineHeight: 1.35,
-    minHeight: "18px",
-    overflowWrap: "anywhere",
-  },
-  frameHost: {
-    border: "1px solid #e0e0e0",
-    borderRadius: "4px",
-    display: "flex",
-    flex: "1 1 360px",
-    minHeight: "300px",
-    minWidth: 0,
-    overflow: "hidden",
-  },
-  noteBox: {
-    display: "flex",
-    flex: "0 0 auto",
-    flexDirection: "column",
-    gap: "6px",
-  },
-  noteDraft: {
-    border: "1px solid #d4d4d4",
-    borderRadius: "4px",
-    boxSizing: "border-box",
-    color: "#222",
-    font: "inherit",
-    fontSize: typography.body,
-    lineHeight: 1.45,
-    minHeight: "78px",
-    padding: "7px 8px",
-    resize: "vertical",
-    width: "100%",
-  },
-  noteActions: {
-    display: "flex",
-    flexWrap: "wrap",
-    gap: "6px",
   },
 };

@@ -164,7 +164,7 @@ describe("slash settings state", () => {
     vi.unstubAllGlobals();
   });
 
-  it("keeps custom commands separate from built-ins", () => {
+  it("treats every saved slash card as a custom skill", () => {
     const state = createSlashSettingsState(
       JSON.stringify([
         {
@@ -182,27 +182,25 @@ describe("slash settings state", () => {
       ]),
     );
 
-    expect(state.builtins.find((card) => card.id === "summarize")).toMatchObject(
-      {
-        title: "Summary Lite",
-      },
-    );
-    expect(state.custom).toHaveLength(1);
-    expect(state.custom[0]).toMatchObject({
-      id: "future-work",
-      title: "Future Work",
-    });
+    expect(state.builtins).toHaveLength(0);
+    expect(state.custom).toHaveLength(2);
+    expect(state.custom.map((card) => card.id)).toEqual([
+      "summarize",
+      "future-work",
+    ]);
   });
 
-  it("serializes only built-in overrides and custom cards", () => {
-    const state = createSlashSettingsState("");
+  it("serializes only custom skill cards", () => {
     const editedState = {
-      ...state,
-      builtins: state.builtins.map((card) =>
-        card.id === "summarize"
-          ? { ...card, slashCommand: "Summary Lite", title: "Summary Lite" }
-          : card,
-      ),
+      builtins: [
+        {
+          id: "summarize",
+          kind: "builtin" as const,
+          promptPrefix: "Focus on experiments and results.",
+          slashCommand: "Summary Lite",
+          title: "Summary Lite",
+        },
+      ],
       custom: [
         {
           id: "future-work",
@@ -217,7 +215,7 @@ describe("slash settings state", () => {
 
     const serialized = serializeSlashSettingsState(editedState);
 
-    expect(serialized).toContain('"id": "summarize"');
+    expect(serialized).not.toContain('"id": "summarize"');
     expect(serialized).toContain('"id": "future-work"');
     expect(serialized).not.toContain('"id": "explain"');
   });
@@ -231,14 +229,22 @@ describe("slash settings state", () => {
     expect(state.custom).toHaveLength(10);
   });
 
-  it("validates duplicate titles across built-in and custom cards", () => {
-    const state = createSlashSettingsState("");
+  it("validates duplicate titles across custom cards", () => {
+    const state = createSlashSettingsState(
+      JSON.stringify([
+        {
+          id: "future-work",
+          label: "Future Work",
+          promptPrefix: "Suggest next studies.",
+        },
+      ]),
+    );
     const duplicate = validateSlashCardDraft(state, {
-      id: "future-work",
+      id: "next-studies",
       kind: "custom",
       promptPrefix: "Suggest next studies.",
-      slashCommand: "Summarize",
-      title: "Summarize",
+      slashCommand: "Future Work",
+      title: "Future Work",
     });
 
     expect(duplicate).toBe("This title is already in use");
@@ -265,7 +271,7 @@ describe("slash settings state", () => {
     expect(result.state.custom).toHaveLength(0);
   });
 
-  it("restores edited built-ins back to code-defined defaults", () => {
+  it("keeps built-in restore as a no-op in custom-only settings", () => {
     const state = createSlashSettingsState(
       JSON.stringify([
         {
@@ -278,10 +284,12 @@ describe("slash settings state", () => {
     );
 
     const restored = restoreBuiltInSlashCard(state, "summarize");
-    const summarize = restored.builtins.find((card) => card.id === "summarize");
 
-    expect(summarize?.title).not.toBe("Summary Lite");
-    expect(serializeSlashSettingsState(restored)).toBe("");
+    expect(restored).toBe(state);
+    expect(restored.custom[0]).toMatchObject({
+      id: "summarize",
+      title: "Summary Lite",
+    });
   });
 
   it("keeps sidebar recommendations limited to built-in commands", () => {
@@ -328,7 +336,6 @@ describe("registerPreferencesPane", () => {
   let mcpToolNameField: FakeField;
   let saveButton: FakeButton;
   let slashAddButton: FakeButton;
-  let slashBuiltins: FakeContainer;
   let slashCustom: FakeContainer;
   let slashLimitStatus: FakeStatusElement;
   let status: FakeStatusElement;
@@ -351,7 +358,6 @@ describe("registerPreferencesPane", () => {
     mcpToolNameField = new FakeField();
     saveButton = new FakeButton();
     slashAddButton = new FakeButton();
-    slashBuiltins = new FakeContainer();
     slashCustom = new FakeContainer();
     slashLimitStatus = new FakeStatusElement();
     status = new FakeStatusElement();
@@ -361,11 +367,11 @@ describe("registerPreferencesPane", () => {
       getSettings: vi.fn(() => ({
         customPresets: "",
         evidenceEnabled: false,
-        evidenceProviderMode: "mcp-web-search" as const,
+        evidenceProviderMode: "mcp-http" as const,
         keyboardShortcut: "I",
         maxContextBudget: 8192,
         mcpAuthToken: "",
-        mcpEndpoint: "",
+        mcpEndpoint: "http://127.0.0.1:23120/mcp",
         mcpToolArgumentsTemplate: "{\"query\":\"{{query}}\",\"max_results\":5}",
         mcpToolName: "web_search",
       })),
@@ -390,7 +396,6 @@ describe("registerPreferencesPane", () => {
       "zotero-ai-assistant-pref-mcp-tool-name": mcpToolNameField,
       "zotero-ai-assistant-pref-save": saveButton,
       "zotero-ai-assistant-pref-slash-add": slashAddButton,
-      "zotero-ai-assistant-pref-slash-builtins": slashBuiltins,
       "zotero-ai-assistant-pref-slash-custom": slashCustom,
       "zotero-ai-assistant-pref-slash-limit-status": slashLimitStatus,
       "zotero-ai-assistant-pref-status": status,
@@ -405,18 +410,15 @@ describe("registerPreferencesPane", () => {
     registerPreferencesPane(createWindow(), deps);
 
     expect(deps.getSettings).toHaveBeenCalledTimes(1);
-    expect(evidenceProviderField.value).toBe("mcp-web-search");
+    expect(evidenceProviderField.value).toBe("mcp-http");
+    expect(mcpEndpointField.value).toBe("http://127.0.0.1:23120/mcp");
     expect(mcpToolNameField.value).toBe("web_search");
     expect(mcpToolArgumentsTemplateField.value).toBe(
       "{\"query\":\"{{query}}\",\"max_results\":5}",
     );
-    expect(slashBuiltins.querySelectorAll('[data-slash-card="true"]').length).toBeGreaterThan(0);
-    expect(
-      slashBuiltins.querySelector('[data-slash-field="title"]'),
-    ).toBeTruthy();
-    expect(
-      slashBuiltins.querySelector('[data-slash-field="slashCommand"]'),
-    ).toBeFalsy();
+    expect(slashCustom.querySelectorAll('[data-slash-card="true"]')).toHaveLength(
+      0,
+    );
   });
 
   it("binds listeners only once when the pane is reopened", () => {
@@ -435,7 +437,7 @@ describe("registerPreferencesPane", () => {
     registerPreferencesPane(createWindow(), deps);
 
     expect(slashLimitStatus.textContent).toBe(
-      "You can add up to 10 custom commands",
+      "You can add up to 10 custom skills",
     );
     expect(slashAddButton.disabled).toBe(false);
   });
@@ -464,7 +466,7 @@ describe("registerPreferencesPane", () => {
       customPresets: "",
       evidenceProviderMode: "mcp-web-search",
       mcpAuthToken: "",
-      mcpEndpoint: "",
+      mcpEndpoint: "http://127.0.0.1:23120/mcp",
       mcpToolArgumentsTemplate: "{\"query\":\"{{query}}\",\"max_results\":5}",
       mcpToolName: "web_search",
     });
@@ -474,7 +476,7 @@ describe("registerPreferencesPane", () => {
     registerPreferencesPane(createWindow(), deps);
 
     evidenceProviderField.value = "mcp-http";
-    mcpEndpointField.value = "http://127.0.0.1:3000/mcp";
+    mcpEndpointField.value = "http://127.0.0.1:23120/mcp";
     mcpToolNameField.value = "web_search";
     mcpToolArgumentsTemplateField.value =
       "{\"query\":\"{{query}}\",\"max_results\":3}";
@@ -488,7 +490,7 @@ describe("registerPreferencesPane", () => {
       customPresets: "",
       evidenceProviderMode: "mcp-http",
       mcpAuthToken: "token-next",
-      mcpEndpoint: "http://127.0.0.1:3000/mcp",
+      mcpEndpoint: "http://127.0.0.1:23120/mcp",
       mcpToolArgumentsTemplate: "{\"query\":\"{{query}}\",\"max_results\":3}",
       mcpToolName: "web_search",
     });
@@ -498,7 +500,7 @@ describe("registerPreferencesPane", () => {
     registerPreferencesPane(createWindow(), deps);
 
     evidenceProviderField.value = "mcp-http";
-    mcpEndpointField.value = "http://127.0.0.1:3000/mcp";
+    mcpEndpointField.value = "http://127.0.0.1:23120/mcp";
     mcpToolNameField.value = "web_search";
     mcpToolArgumentsTemplateField.value =
       "{\"query\":\"{{query}}\",\"max_results\":2}";
@@ -511,7 +513,7 @@ describe("registerPreferencesPane", () => {
       customPresets: "",
       evidenceProviderMode: "mcp-http",
       mcpAuthToken: "token-next",
-      mcpEndpoint: "http://127.0.0.1:3000/mcp",
+      mcpEndpoint: "http://127.0.0.1:23120/mcp",
       mcpToolArgumentsTemplate: "{\"query\":\"{{query}}\",\"max_results\":2}",
       mcpToolName: "web_search",
     });

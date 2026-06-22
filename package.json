@@ -2,7 +2,7 @@
   "name": "zotero-webai",
   "type": "module",
   "version": "0.9.7",
-  "description": "Zotero 9 Web AI reading workspace with embedded DeepSeek Web, Z.ai Web, skills, MCP, PDF, selection, image, and note workflows.",
+  "description": "Zotero 9 Web AI reading workspace with embedded DeepSeek Web, Z.ai Web, custom slash skills, and default MCP HTTP tooling.",
   "author": "lineex",
   "homepage": "https://github.com/lineex/Zotero-WebAI#readme",
   "repository": {

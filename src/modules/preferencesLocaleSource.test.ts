@@ -29,11 +29,11 @@ describe("preferences locale copy", () => {
     expect(zhPreferences).toContain(
       "ai-assistant-pref-slash-title = Slash Skill",
     );
-    expect(enPreferences).toContain(
-      "ai-assistant-pref-slash-builtins-title = Built-in skills",
+    expect(enPreferences).not.toContain(
+      "ai-assistant-pref-slash-builtins-title",
     );
-    expect(zhPreferences).toContain(
-      "ai-assistant-pref-slash-builtins-title = 内置 skill",
+    expect(zhPreferences).not.toContain(
+      "ai-assistant-pref-slash-builtins-title",
     );
     expect(enPreferences).toContain(
       "ai-assistant-pref-slash-custom-title = My skills",
@@ -62,10 +62,10 @@ describe("preferences locale copy", () => {
 
   it("describes slash settings as title-and-prompt editing only", () => {
     expect(enPreferences).toContain(
-      "ai-assistant-pref-slash-help = Edit built-in skills or create your own by changing only the title and prompt text.",
+      "ai-assistant-pref-slash-help = Create custom skills by setting a title and prompt text. The chat box shows them when you type /.",
     );
     expect(zhPreferences).toContain(
-      "ai-assistant-pref-slash-help = 直接编辑内置 skill，或新增自己的 skill。这里只需要修改标题和提示词。",
+      "ai-assistant-pref-slash-help = 只创建自定义 skill：填写标题和提示词后，在对话框输入 / 即可选择。",
     );
   });
 
@@ -89,10 +89,10 @@ describe("preferences locale copy", () => {
 
   it("explains provider-specific settings", () => {
     expect(enPreferences).toContain(
-      "ai-assistant-pref-evidence-provider-help = The default path does not require credentials. Switch to MCP HTTP only when you run or configure an MCP server.",
+      "ai-assistant-pref-evidence-provider-help = MCP HTTP is the default path for local Zotero tooling. Use the academic verification fallback only when you do not run an MCP server.",
     );
     expect(zhPreferences).toContain(
-      "ai-assistant-pref-evidence-provider-help = 默认路径不需要凭据。只有在你运行或配置了 MCP 服务时，才需要切换到 MCP HTTP。",
+      "ai-assistant-pref-evidence-provider-help = MCP HTTP 是默认本地工具路径。只有不运行 MCP 服务时，才切换到默认学术查证回退。",
     );
     expect(enPreferences).toContain(
       "ai-assistant-pref-mcp-settings-title = MCP HTTP tool setup",

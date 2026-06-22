@@ -50,7 +50,7 @@ describe("preferences.xhtml", () => {
     expect(preferencesSource).toContain(
       'data-l10n-id="ai-assistant-pref-slash-title"',
     );
-    expect(preferencesSource).toContain(
+    expect(preferencesSource).not.toContain(
       'id="zotero-ai-assistant-pref-slash-builtins"',
     );
     expect(preferencesSource).toContain(
@@ -102,6 +102,9 @@ describe("preferences.xhtml", () => {
     );
     expect(preferencesSource).toContain('value="mcp-web-search"');
     expect(preferencesSource).toContain('value="mcp-http"');
+    expect(preferencesSource).toContain(
+      'placeholder="http://127.0.0.1:23120/mcp"',
+    );
     expect(preferencesSource).not.toContain(
       `value="${["ta", "vily"].join("")}"`,
     );

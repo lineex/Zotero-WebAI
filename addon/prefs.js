@@ -4,9 +4,9 @@ pref("extensions.zotero.zotero-webai.sidebarVisible", true);
 pref("extensions.zotero.zotero-webai.evidenceEnabled", false);
 pref(
   "extensions.zotero.zotero-webai.evidenceProviderMode",
-  "mcp-web-search",
+  "mcp-http",
 );
-pref("extensions.zotero.zotero-webai.mcpEndpoint", "");
+pref("extensions.zotero.zotero-webai.mcpEndpoint", "http://127.0.0.1:23120/mcp");
 pref("extensions.zotero.zotero-webai.mcpToolName", "web_search");
 pref(
   "extensions.zotero.zotero-webai.mcpToolArgumentsTemplate",

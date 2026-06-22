@@ -3,10 +3,10 @@ import { getPref, setPref } from "../utils/prefs";
 import { config } from "../../package.json";
 import type { ScopeType } from "../types/scope";
 
-export const DEFAULT_EVIDENCE_PROVIDER_MODE = "mcp-web-search";
+export const DEFAULT_EVIDENCE_PROVIDER_MODE = "mcp-http";
 export type EvidenceProviderMode =
   | typeof DEFAULT_EVIDENCE_PROVIDER_MODE
-  | "mcp-http";
+  | "mcp-web-search";
 type LegacyEvidenceProviderMode = "builtin-search";
 
 export interface PersistedSettings {
@@ -25,6 +25,7 @@ export type Settings = PersistedSettings;
 
 export const DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE =
   '{"query":"{{query}}","max_results":5}';
+export const DEFAULT_MCP_ENDPOINT = "http://127.0.0.1:23120/mcp";
 
 export const DEFAULT_SETTINGS: Settings = {
   customPresets: "",
@@ -33,7 +34,7 @@ export const DEFAULT_SETTINGS: Settings = {
   keyboardShortcut: "I",
   maxContextBudget: 4000,
   mcpAuthToken: "",
-  mcpEndpoint: "",
+  mcpEndpoint: DEFAULT_MCP_ENDPOINT,
   mcpToolArgumentsTemplate: DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
   mcpToolName: "web_search",
 };
@@ -43,7 +44,7 @@ export const PREFERENCES_PANE_ID = `${config.addonRef}-prefpane`;
 function normalizeEvidenceProviderMode(
   mode: string | LegacyEvidenceProviderMode | undefined,
 ): EvidenceProviderMode {
-  if (mode === "mcp-http") {
+  if (mode === "mcp-http" || mode === "mcp-web-search") {
     return mode;
   }
   return DEFAULT_EVIDENCE_PROVIDER_MODE;
@@ -347,7 +348,9 @@ export function getSettings(): Settings {
       getPref("maxContextBudget") || DEFAULT_SETTINGS.maxContextBudget,
     ),
     mcpAuthToken: (getPref("mcpAuthToken") || "") as string,
-    mcpEndpoint: (getPref("mcpEndpoint") || "") as string,
+    mcpEndpoint:
+      ((getPref("mcpEndpoint") || "") as string).trim() ||
+      DEFAULT_SETTINGS.mcpEndpoint,
     mcpToolArgumentsTemplate:
       ((getPref("mcpToolArgumentsTemplate") || "") as string).trim() ||
       DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
@@ -433,7 +436,9 @@ function mergeSettings(overrides?: Partial<Settings>): Settings {
       overrides.evidenceProviderMode ?? settings.evidenceProviderMode,
     ),
     mcpAuthToken: String(overrides.mcpAuthToken ?? settings.mcpAuthToken ?? ""),
-    mcpEndpoint: String(overrides.mcpEndpoint ?? settings.mcpEndpoint ?? ""),
+    mcpEndpoint: String(
+      overrides.mcpEndpoint ?? settings.mcpEndpoint ?? DEFAULT_MCP_ENDPOINT,
+    ),
     mcpToolArgumentsTemplate: String(
       overrides.mcpToolArgumentsTemplate ??
         settings.mcpToolArgumentsTemplate ??

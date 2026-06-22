@@ -3,7 +3,7 @@ interface BuildDevProfilePrefsOptions {
   prefsPrefix: string;
 }
 
-const DEFAULT_EVIDENCE_PROVIDER_MODE = "mcp-web-search";
+const DEFAULT_EVIDENCE_PROVIDER_MODE = "mcp-http";
 
 function normalizeBooleanPref(
   value: string | undefined,
@@ -17,12 +17,12 @@ function normalizeBooleanPref(
 
 function normalizeEvidenceProviderPref(
   value: string | undefined,
-): typeof DEFAULT_EVIDENCE_PROVIDER_MODE | "mcp-http" | undefined {
+): typeof DEFAULT_EVIDENCE_PROVIDER_MODE | "mcp-web-search" | undefined {
   if (!value) {
     return undefined;
   }
 
-  return value === "mcp-http" ? "mcp-http" : DEFAULT_EVIDENCE_PROVIDER_MODE;
+  return value === "mcp-web-search" ? "mcp-web-search" : DEFAULT_EVIDENCE_PROVIDER_MODE;
 }
 
 export function buildDevProfilePrefs({

@@ -6,7 +6,6 @@ import {
   type PersistedSettings,
   validateEvidenceSettings,
 } from "../services/settingsManager";
-import { getAllPresets } from "../services/presets";
 import { createHostEvent } from "../utils/domEvents";
 import { createTraceId, debugLog, exportDebugLog } from "../utils/debugLog";
 import { EventBus } from "../utils/eventBus";
@@ -78,7 +77,6 @@ const MCP_TOOL_ARGUMENTS_TEMPLATE_ID =
   "zotero-ai-assistant-pref-mcp-tool-arguments-template";
 const MCP_AUTH_TOKEN_ID = "zotero-ai-assistant-pref-mcp-auth-token";
 const CUSTOM_PRESETS_ID = "zotero-ai-assistant-pref-custom-presets";
-const SLASH_BUILTINS_ID = "zotero-ai-assistant-pref-slash-builtins";
 const SLASH_CUSTOM_ID = "zotero-ai-assistant-pref-slash-custom";
 const SLASH_ADD_ID = "zotero-ai-assistant-pref-slash-add";
 const SLASH_LIMIT_STATUS_ID = "zotero-ai-assistant-pref-slash-limit-status";
@@ -86,24 +84,6 @@ const SLASH_LIMIT_STATUS_ID = "zotero-ai-assistant-pref-slash-limit-status";
 const MAX_CUSTOM_SLASH_COMMANDS = 10;
 const BUTTON_ACTIVATION_DEDUPE_WINDOW_MS = 300;
 const HTML_NS = "http://www.w3.org/1999/xhtml";
-
-interface BuiltInCardDefault extends SlashCardDraft {
-  kind: "builtin";
-}
-
-function getBuiltInDefaults(): BuiltInCardDefault[] {
-  return getAllPresets("").map((preset) => ({
-    id: preset.id,
-    kind: "builtin" as const,
-    promptPrefix: preset.promptPrefix,
-    slashCommand: preset.slashCommand?.trim() || preset.id,
-    title: preset.label,
-  }));
-}
-
-function getBuiltInDefaultMap(): Map<string, BuiltInCardDefault> {
-  return new Map(getBuiltInDefaults().map((card) => [card.id, card]));
-}
 
 function normalizeToken(value: string): string {
   return String(value || "")
@@ -154,70 +134,26 @@ function getValidationCopy(_zh: boolean) {
 export function createSlashSettingsState(
   customPresetsValue: string,
 ): SlashSettingsState {
-  const builtInDefaults = getBuiltInDefaults();
-  const builtInIds = new Set(builtInDefaults.map((card) => card.id));
-  const mergedBuiltIns = new Map(
-    getAllPresets(customPresetsValue)
-      .filter((preset) => builtInIds.has(preset.id))
-      .map((preset) => [
-        preset.id,
-        {
-          id: preset.id,
-          kind: "builtin" as const,
-          promptPrefix: preset.promptPrefix,
-          slashCommand: preset.slashCommand?.trim() || preset.id,
-          title: preset.label,
-        },
-      ]),
-  );
   const parsedCustom = parseCustomPresets(customPresetsValue).presets;
 
   return {
-    builtins: builtInDefaults.map((card) =>
-      copyForState(mergedBuiltIns.get(card.id) || card),
-    ),
-    custom: parsedCustom
-      .filter((preset) => !builtInIds.has(preset.id))
-      .map((preset) => ({
-        id: preset.id,
-        isNew: false,
-        kind: "custom" as const,
-        promptPrefix: String(preset.promptPrefix || "").trim(),
-        slashCommand: String(
-          preset.slashCommand || preset.label || preset.id || "",
-        ).trim(),
-        title: String(preset.label || "").trim(),
-      })),
+    builtins: [],
+    custom: parsedCustom.map((preset) => ({
+      id: preset.id,
+      isNew: false,
+      kind: "custom" as const,
+      promptPrefix: String(preset.promptPrefix || "").trim(),
+      slashCommand: String(
+        preset.slashCommand || preset.label || preset.id || "",
+      ).trim(),
+      title: String(preset.label || "").trim(),
+    })),
   };
 }
 
 export function serializeSlashSettingsState(
   state: SlashSettingsState,
 ): string {
-  const defaults = getBuiltInDefaultMap();
-  const serializedBuiltins = state.builtins
-    .map((card) => {
-      if (card.error) {
-        return null;
-      }
-      const base = defaults.get(card.id);
-      if (!base) {
-        return null;
-      }
-
-      const normalized = {
-        id: card.id,
-        label: card.title.trim(),
-        promptPrefix: card.promptPrefix.trim(),
-        slashCommand: normalizeToken(card.title),
-      };
-      const unchanged =
-        normalized.label === base.title.trim() &&
-        normalized.promptPrefix === base.promptPrefix.trim() &&
-        normalized.slashCommand === normalizeToken(base.slashCommand);
-      return unchanged ? null : normalized;
-    })
-    .filter(Boolean);
   const serializedCustom = state.custom
     .filter((card) => !card.error && !isBlankCard(card))
     .map((card) => ({
@@ -227,8 +163,9 @@ export function serializeSlashSettingsState(
       slashCommand: normalizeToken(card.title),
     }));
 
-  const serialized = [...serializedBuiltins, ...serializedCustom];
-  return serialized.length > 0 ? JSON.stringify(serialized, null, 2) : "";
+  return serializedCustom.length > 0
+    ? JSON.stringify(serializedCustom, null, 2)
+    : "";
 }
 
 export function addCustomSlashCard(
@@ -256,20 +193,9 @@ export function addCustomSlashCard(
 
 export function restoreBuiltInSlashCard(
   state: SlashSettingsState,
-  id: string,
+  _id: string,
 ): SlashSettingsState {
-  const defaults = getBuiltInDefaultMap();
-  const restored = defaults.get(id);
-  if (!restored) {
-    return state;
-  }
-
-  return {
-    ...state,
-    builtins: state.builtins.map((card) =>
-      card.id === id ? copyForState(restored) : copyForState(card),
-    ),
-  };
+  return state;
 }
 
 export function validateSlashCardDraft(
@@ -287,11 +213,11 @@ export function validateSlashCardDraft(
   }
 
   const normalizedSlash = normalizeToken(draft.title);
-  const duplicate = [...state.builtins, ...state.custom]
+  const duplicate = state.custom
     .filter((card) => !(card.kind === draft.kind && card.id === draft.id))
     .some(
       (card) =>
-        normalizeToken(card.slashCommand).toLowerCase() ===
+        normalizeToken(card.title).toLowerCase() ===
         normalizedSlash.toLowerCase(),
     );
   return duplicate ? copy.duplicateSlash : null;
@@ -609,32 +535,20 @@ function renderSlashSettings(
   doc: PreferencesDocument,
   state: SlashSettingsState,
 ): void {
-  const builtins = doc.getElementById(SLASH_BUILTINS_ID) as
-    | PreferencesContainerElement
-    | null;
   const custom = doc.getElementById(SLASH_CUSTOM_ID) as
     | PreferencesContainerElement
     | null;
-  if (!builtins || !custom) {
+  if (!custom) {
     return;
   }
 
   replaceContainerChildren(
-    builtins,
-    createSlashSectionElement(doc, {
-      cards: state.builtins,
-      emptyText: "",
-      kind: "builtin",
-      title: "Built-in commands",
-    }),
-  );
-  replaceContainerChildren(
     custom,
     createSlashSectionElement(doc, {
       cards: state.custom,
-      emptyText: "No custom commands yet",
+      emptyText: "No custom skills yet",
       kind: "custom",
-      title: "My commands",
+      title: "My skills",
     }),
   );
   updateSlashLimitStatus(doc, state);
@@ -665,9 +579,7 @@ function createSlashSectionElement(
     createHtmlElement(doc, "span", {
       style: "opacity: 0.78;",
       text:
-        kind === "builtin"
-          ? "Edit the title and prompt text directly. Restore default removes your saved override."
-          : "Add your own commands here. Leaving a card saves it automatically, and blank new cards are discarded.",
+        "Add your own skills here. Leaving a card saves it automatically, and blank new cards are discarded.",
     }),
   );
   section.appendChild(header);
@@ -713,18 +625,18 @@ function createSlashCardElement(
   });
   header.appendChild(
     createHtmlElement(doc, "strong", {
-      text: card.kind === "builtin" ? "Built-in command" : "Custom command",
+      text: "Custom skill",
     }),
   );
   header.appendChild(
     createHtmlElement(doc, "button", {
       attributes: {
-        "data-slash-action": card.kind === "builtin" ? "restore" : "delete",
+        "data-slash-action": "delete",
         "data-slash-card-id": card.id,
         "data-slash-card-kind": card.kind,
         type: "button",
       },
-      text: card.kind === "builtin" ? "Restore default" : "Delete command",
+      text: "Delete skill",
     }),
   );
   cardElement.appendChild(header);
@@ -834,7 +746,6 @@ function bindSlashCardInteractions(
   setState: (state: SlashSettingsState, shouldSave: boolean) => void,
 ): void {
   const containers = [
-    doc.getElementById(SLASH_BUILTINS_ID),
     doc.getElementById(SLASH_CUSTOM_ID),
   ].filter(Boolean) as Array<
     HTMLElement & {
@@ -896,11 +807,6 @@ function bindSlashCardInteractions(
           return;
         }
 
-        if (action === "restore" && kind === "builtin") {
-          setState(restoreBuiltInSlashCard(getState(), id), true);
-          return;
-        }
-
         if (action === "delete" && kind === "custom") {
           setState(
             {
@@ -955,7 +861,7 @@ function updateSlashLimitStatus(
     | null;
   const addButton = getField(doc, SLASH_ADD_ID);
   if (status) {
-    status.textContent = "You can add up to 10 custom commands";
+    status.textContent = "You can add up to 10 custom skills";
   }
   setDisabled(addButton, state.custom.length >= MAX_CUSTOM_SLASH_COMMANDS);
 }
@@ -971,13 +877,14 @@ function readFormValues(doc: PreferencesDocument): Partial<PersistedSettings> {
   );
   const mcpToolNameField = getField(doc, MCP_TOOL_NAME_ID);
   const selectedProvider = evidenceProviderField?.value;
+  const evidenceProviderMode =
+    selectedProvider === "mcp-http" || selectedProvider === "mcp-web-search"
+      ? selectedProvider
+      : DEFAULT_EVIDENCE_PROVIDER_MODE;
 
   return {
     customPresets: customPresetsField?.value ?? "",
-    evidenceProviderMode:
-      selectedProvider === "mcp-http"
-        ? selectedProvider
-        : DEFAULT_EVIDENCE_PROVIDER_MODE,
+    evidenceProviderMode,
     mcpAuthToken: mcpAuthTokenField?.value?.trim?.() ?? "",
     mcpEndpoint: mcpEndpointField?.value?.trim?.() ?? "",
     mcpToolArgumentsTemplate:

@@ -51,7 +51,6 @@ export type FluentMessageId =
   | 'ai-assistant-pref-mcp-tool-name-label'
   | 'ai-assistant-pref-save'
   | 'ai-assistant-pref-slash-add'
-  | 'ai-assistant-pref-slash-builtins-title'
   | 'ai-assistant-pref-slash-custom-title'
   | 'ai-assistant-pref-slash-empty'
   | 'ai-assistant-pref-slash-help'
