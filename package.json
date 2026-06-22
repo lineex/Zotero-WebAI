@@ -1,0 +1,55 @@
+{
+  "name": "zotero-webai",
+  "type": "module",
+  "version": "0.9.7",
+  "description": "Zotero 9 Web AI reading workspace with embedded DeepSeek Web, Z.ai Web, skills, MCP, PDF, selection, image, and note workflows.",
+  "author": "lineex",
+  "homepage": "https://github.com/lineex/Zotero-WebAI#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lineex/Zotero-WebAI.git"
+  },
+  "config": {
+    "addonName": "Zotero-WebAI",
+    "addonID": "zotero-webai@lineex.dev",
+    "addonRef": "zotero-webai",
+    "addonInstance": "ZoteroWebAI",
+    "prefsPrefix": "extensions.zotero.zotero-webai"
+  },
+  "scripts": {
+    "start": "node scripts/dev-serve.mjs",
+    "build": "node scripts/scaffold-build.mjs && tsc --noEmit",
+    "check": "npm run privacy:check && npm test && npm run build && npm run verify:xpi",
+    "privacy:check": "node scripts/privacy-check.mjs",
+    "smoke:xpi": "npm run build && npm run verify:xpi",
+    "build:dev:xpi": "DS_COPILOT_BUILD_CHANNEL=dev DS_COPILOT_DEV_NUMBER=$(node scripts/dev-build-number.mjs) npm run smoke:xpi",
+    "build:release:xpi": "DS_COPILOT_BUILD_CHANNEL=release npm run smoke:xpi",
+    "verify:xpi": "node scripts/verify-build-artifact.mjs",
+    "lint:check": "prettier --check . && eslint .",
+    "lint:fix": "prettier --write . && eslint . --fix",
+    "release": "zotero-plugin release",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "jotai": "^2.12.1",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-markdown": "^10.1.0",
+    "remark-breaks": "^4.0.0",
+    "remark-gfm": "^4.0.1",
+    "zotero-plugin-toolkit": "^5.1.2"
+  },
+  "devDependencies": {
+    "@types/react": "^18.3.12",
+    "@types/react-dom": "^18.3.1",
+    "@typescript-eslint/eslint-plugin": "^8.18.0",
+    "@typescript-eslint/parser": "^8.18.0",
+    "eslint": "^9.17.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8",
+    "zotero-plugin-scaffold": "^0.8.6",
+    "zotero-types": "^4.1.2"
+  }
+}

@@ -1,0 +1,214 @@
+<vbox
+  id="zotero-ai-assistant-prefs"
+  onload="
+    Zotero.ZoteroWebAI.hooks.onPrefsEvent('load', {
+      window: this.ownerDocument.defaultView,
+    })
+  "
+  xmlns="http://www.mozilla.org/keymaster/gatekeeper/there.is.only.xul"
+  xmlns:html="http://www.w3.org/1999/xhtml"
+>
+  <linkset>
+    <html:link rel="localization" href="zotero-webai-preferences.ftl" />
+  </linkset>
+
+  <groupbox>
+    <caption label="Zotero-WebAI" />
+    <vbox
+      style="display: flex; flex-direction: column; gap: 12px; padding: 8px 0"
+    >
+      <description data-l10n-id="ai-assistant-pref-description" />
+
+      <hbox
+        style="display: flex; gap: 8px; align-items: center; margin-top: 6px"
+      >
+        <button
+          id="zotero-ai-assistant-pref-save"
+          label="Save"
+          data-l10n-id="ai-assistant-pref-save"
+        />
+        <button
+          id="zotero-ai-assistant-pref-export-debug-log"
+          label="Export Debug Log"
+          data-l10n-id="ai-assistant-pref-export-debug-log"
+        />
+        <description
+          id="zotero-ai-assistant-pref-status"
+          style="margin-inline-start: 8px"
+        />
+      </hbox>
+
+      <separator class="thin" />
+
+      <description data-l10n-id="ai-assistant-pref-evidence-description" />
+
+      <vbox style="display: flex; flex-direction: column; gap: 6px">
+        <label
+          value="Evidence Provider"
+          data-l10n-id="ai-assistant-pref-evidence-provider-label"
+          control="zotero-ai-assistant-pref-evidence-provider"
+          style="width: 120px"
+        />
+        <html:select
+          id="zotero-ai-assistant-pref-evidence-provider"
+          style="
+            min-width: 320px;
+            max-width: 520px;
+            padding: 6px 8px;
+            border-radius: 6px;
+          "
+        >
+          <html:option
+            value="mcp-web-search"
+            data-l10n-id="ai-assistant-pref-evidence-provider-builtin"
+          >
+            Default academic verification (no key)
+          </html:option>
+          <html:option
+            value="mcp-http"
+            data-l10n-id="ai-assistant-pref-evidence-provider-mcp"
+          >
+            MCP HTTP tool
+          </html:option>
+        </html:select>
+        <description data-l10n-id="ai-assistant-pref-evidence-provider-help" />
+      </vbox>
+
+      <vbox
+        id="zotero-ai-assistant-pref-mcp-settings"
+        style="
+          display: none;
+          flex-direction: column;
+          gap: 10px;
+          padding: 12px;
+          border: 1px solid rgba(32, 128, 96, 0.35);
+          border-radius: 8px;
+          background: rgba(32, 128, 96, 0.06);
+        "
+      >
+        <description
+          data-l10n-id="ai-assistant-pref-mcp-settings-title"
+          style="font-weight: 600; margin: 0"
+        />
+
+        <hbox align="center">
+          <label
+            value="MCP Endpoint"
+            data-l10n-id="ai-assistant-pref-mcp-endpoint-label"
+            control="zotero-ai-assistant-pref-mcp-endpoint"
+            style="width: 150px"
+          />
+          <html:input
+            id="zotero-ai-assistant-pref-mcp-endpoint"
+            type="url"
+            placeholder="http://127.0.0.1:3000/mcp"
+            style="flex: 1; min-width: 0"
+          />
+        </hbox>
+
+        <hbox align="center">
+          <label
+            value="Tool Name"
+            data-l10n-id="ai-assistant-pref-mcp-tool-name-label"
+            control="zotero-ai-assistant-pref-mcp-tool-name"
+            style="width: 150px"
+          />
+          <html:input
+            id="zotero-ai-assistant-pref-mcp-tool-name"
+            type="text"
+            placeholder="web_search"
+            style="flex: 1; min-width: 0"
+          />
+        </hbox>
+
+        <vbox style="display: flex; flex-direction: column; gap: 6px">
+          <label
+            value="Tool Arguments JSON"
+            data-l10n-id="ai-assistant-pref-mcp-tool-arguments-template-label"
+            control="zotero-ai-assistant-pref-mcp-tool-arguments-template"
+          />
+          <html:textarea
+            id="zotero-ai-assistant-pref-mcp-tool-arguments-template"
+            rows="4"
+            spellcheck="false"
+            style="width: 100%; min-height: 84px; resize: vertical"
+          ></html:textarea>
+        </vbox>
+
+        <hbox align="center">
+          <label
+            value="Bearer Token"
+            data-l10n-id="ai-assistant-pref-mcp-auth-token-label"
+            control="zotero-ai-assistant-pref-mcp-auth-token"
+            style="width: 150px"
+          />
+          <html:input
+            id="zotero-ai-assistant-pref-mcp-auth-token"
+            type="password"
+            style="flex: 1; min-width: 0"
+          />
+        </hbox>
+
+        <description data-l10n-id="ai-assistant-pref-mcp-help" />
+      </vbox>
+
+      <hbox style="display: flex; gap: 8px; align-items: center">
+        <button
+          id="zotero-ai-assistant-pref-evidence-validate"
+          label="Validate Evidence Provider"
+          data-l10n-id="ai-assistant-pref-evidence-validate"
+        />
+        <description
+          id="zotero-ai-assistant-pref-evidence-status"
+          style="margin-inline-start: 8px"
+        />
+      </hbox>
+
+      <separator class="thin" />
+
+      <description
+        data-l10n-id="ai-assistant-pref-commands-title"
+        style="font-weight: 600"
+      />
+      <description data-l10n-id="ai-assistant-pref-commands-help" />
+      <description
+        data-l10n-id="ai-assistant-pref-slash-title"
+        style="font-weight: 600; margin-top: 8px"
+      />
+      <description data-l10n-id="ai-assistant-pref-slash-help" />
+      <html:div
+        id="zotero-ai-assistant-pref-slash-builtins"
+        style="display: flex; flex-direction: column; gap: 10px; width: 100%;"
+      >
+      </html:div>
+      <html:div
+        id="zotero-ai-assistant-pref-slash-custom"
+        style="display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 10px;"
+      ></html:div>
+      <html:div
+        style="
+          display: flex;
+          gap: 8px;
+          align-items: center;
+          flex-wrap: wrap;
+          margin-top: 8px;
+        "
+      >
+        <button
+          id="zotero-ai-assistant-pref-slash-add"
+          label="Add command"
+          data-l10n-id="ai-assistant-pref-slash-add"
+        />
+        <description id="zotero-ai-assistant-pref-slash-limit-status" />
+      </html:div>
+      <html:textarea
+        id="zotero-ai-assistant-pref-custom-presets"
+        spellcheck="false"
+        style="
+          display: none;
+        "
+        readonly="readonly"
+      ></html:textarea>
+    </vbox>
+  </groupbox>
+</vbox>

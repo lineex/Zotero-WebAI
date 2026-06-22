@@ -1,0 +1,52 @@
+/* Zotero-WebAI styles */
+
+.ai-assistant-pane {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-width: 0;
+}
+
+.ai-assistant-selection-popup {
+  font: inherit;
+}
+
+.ai-assistant-selection-popup .toolbar-button {
+  font: inherit;
+}
+
+.zotero-webai-tabbar-button {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: 4px;
+  box-sizing: border-box;
+  cursor: pointer;
+  display: inline-flex;
+  flex: 0 0 auto;
+  height: 26px;
+  justify-content: center;
+  margin-inline-start: 4px;
+  min-width: 26px;
+  padding: 4px;
+}
+
+.zotero-webai-tabbar-button:hover {
+  background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.zotero-webai-tabbar-button img {
+  display: block;
+  height: 18px;
+  width: 18px;
+}
+
+.ai-assistant-web-browser {
+  border: 0;
+  flex: 1 1 auto;
+  height: 100%;
+  min-height: 360px;
+  min-width: 0;
+  width: 100%;
+}

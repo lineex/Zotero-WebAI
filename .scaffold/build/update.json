@@ -1,0 +1,19 @@
+{
+  "addons": {
+    "zotero-webai@lineex.dev": {
+      "updates": [
+        {
+          "version": "0.9.7",
+          "update_link": "https://github.com/lineex/Zotero-WebAI/releases/download/v0.9.7/Zotero-WebAI-0.9.7.xpi",
+          "update_hash": "sha512:c496e6ca625038a723c3ce1f4318546656ed9aab1a4160623967cc3d28f36a92defbe2f79f32ee501b960065c4c1d097ce5481fbada5f4e216e1e57384c04af6",
+          "applications": {
+            "zotero": {
+              "strict_min_version": "9.0",
+              "strict_max_version": "9.*"
+            }
+          }
+        }
+      ]
+    }
+  }
+}

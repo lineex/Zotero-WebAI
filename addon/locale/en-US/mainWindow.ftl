@@ -1,0 +1,13 @@
+ai-assistant-sidebar-title =
+    .label = Zotero-WebAI
+ai-assistant-sidebar-sidenav =
+    .tooltiptext = Zotero-WebAI
+ai-assistant-empty-state = Select a paper or collection to start chatting
+ai-assistant-scope-pdf = Current PDF
+ai-assistant-scope-paper = Paper
+ai-assistant-scope-collection = Collection
+ai-assistant-scope-manual-selection = Selection ({ $count } items)
+ai-assistant-new-thread = New Thread
+ai-assistant-send = Send
+ai-assistant-placeholder = Ask about this paper...
+ai-assistant-settings = Settings
