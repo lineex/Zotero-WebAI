@@ -24,6 +24,17 @@ export interface MCPToolCallOutcome {
   usedFallback: boolean;
 }
 
+export interface MCPToolDetailedResult {
+  raw: unknown;
+  results: MCPToolResultItem[];
+  text: string;
+  toolName: string;
+}
+
+export interface MCPToolDetailedCallOutcome extends MCPToolDetailedResult {
+  usedFallback: boolean;
+}
+
 interface MCPClientConfig {
   authToken?: string;
   endpoint: string;
@@ -92,6 +103,16 @@ export async function callMCPToolByName(
   toolName: string,
   toolArguments: Record<string, unknown> = {},
 ): Promise<MCPToolResultItem[]> {
+  return (
+    await callMCPToolDetailed(settings, toolName, toolArguments)
+  ).results;
+}
+
+export async function callMCPToolDetailed(
+  settings: Pick<Settings, "mcpAuthToken" | "mcpEndpoint">,
+  toolName: string,
+  toolArguments: Record<string, unknown> = {},
+): Promise<MCPToolDetailedResult> {
   const normalizedToolName = toolName.trim();
   if (!normalizedToolName) {
     throw new Error("MCP tool name is required");
@@ -105,7 +126,7 @@ export async function callMCPToolByName(
     name: normalizedToolName,
     arguments: toolArguments,
   });
-  return normalizeToolResult(result, normalizedToolName);
+  return normalizeDetailedToolResult(result, normalizedToolName);
 }
 
 export async function callMCPToolWithFallback(
@@ -148,6 +169,69 @@ export async function callMCPToolWithFallback(
           query,
         ),
         toolName: tool.name,
+        usedFallback: true,
+      };
+    } catch (error) {
+      fallbackError = error;
+    }
+  }
+
+  if (primaryError) {
+    throw primaryError;
+  }
+  if (fallbackError) {
+    throw fallbackError;
+  }
+  throw new Error("No suitable MCP tool found for conversation context");
+}
+
+export async function callMCPToolDetailedWithFallback(
+  settings: Pick<
+    Settings,
+    | "mcpAuthToken"
+    | "mcpEndpoint"
+    | "mcpToolArgumentsTemplate"
+    | "mcpToolName"
+  >,
+  query: string,
+  knownTools?: MCPToolSummary[],
+): Promise<MCPToolDetailedCallOutcome> {
+  let primaryError: unknown = null;
+  const configuredToolName = settings.mcpToolName?.trim();
+  if (configuredToolName) {
+    try {
+      const detailed = await callMCPToolDetailed(
+        settings,
+        configuredToolName,
+        buildToolArguments(
+          settings.mcpToolArgumentsTemplate || "",
+          query,
+        ) as Record<string, unknown>,
+      );
+      return {
+        ...detailed,
+        usedFallback: false,
+      };
+    } catch (error) {
+      primaryError = error;
+    }
+  }
+
+  const tools = knownTools || (await listMCPTools(settings));
+  const candidates = selectFallbackMCPTools(tools, configuredToolName);
+  let fallbackError: unknown = null;
+  for (const tool of candidates) {
+    try {
+      const detailed = await callMCPToolDetailed(
+        settings,
+        tool.name,
+        buildToolArguments(buildMCPToolArgumentsTemplate(tool), query) as Record<
+          string,
+          unknown
+        >,
+      );
+      return {
+        ...detailed,
         usedFallback: true,
       };
     } catch (error) {
@@ -321,7 +405,7 @@ async function initializeMCP(config: MCPClientConfig): Promise<MCPRequestContext
     protocolVersion: "2025-06-18",
     capabilities: {},
     clientInfo: {
-      name: "Zotero-WebAI",
+      name: "Zotero WebAI",
       version: "0.9.7",
     },
   });
@@ -333,6 +417,7 @@ function buildMCPHeaders(authToken?: string): Record<string, string> {
   const headers: Record<string, string> = {
     Accept: "application/json, text/event-stream",
     "Content-Type": "application/json",
+    "MCP-Protocol-Version": "2025-06-18",
   };
   if (authToken?.trim()) {
     headers.Authorization = `Bearer ${authToken.trim()}`;
@@ -451,28 +536,57 @@ function normalizeToolResult(
   result: unknown,
   toolName: string,
 ): MCPToolResultItem[] {
+  return normalizeDetailedToolResult(result, toolName).results;
+}
+
+function normalizeDetailedToolResult(
+  result: unknown,
+  toolName: string,
+): MCPToolDetailedResult {
   const record = (result || {}) as Record<string, unknown>;
   const structured = record.structuredContent;
   const structuredItems = normalizeStructuredItems(structured);
+  const contentText = extractContentText(record.content);
+  const structuredText =
+    structured !== undefined ? safeJSONStringify(structured) : "";
+  const fallbackText =
+    contentText ||
+    structuredText ||
+    (result !== undefined ? safeJSONStringify(result) : "");
+
   if (structuredItems.length > 0) {
-    return structuredItems;
+    return {
+      raw: result,
+      results: structuredItems,
+      text: fallbackText,
+      toolName,
+    };
   }
 
-  const text = extractContentText(record.content);
-  const parsedTextItems = parseTextItems(text);
+  const parsedTextItems = parseTextItems(contentText);
   if (parsedTextItems.length > 0) {
-    return parsedTextItems;
+    return {
+      raw: result,
+      results: parsedTextItems,
+      text: fallbackText,
+      toolName,
+    };
   }
 
-  return text
-    ? [
-        {
-          content: text,
-          source: toolName,
-          title: "MCP tool result",
-        },
-      ]
-    : [];
+  return {
+    raw: result,
+    results: fallbackText
+      ? [
+          {
+            content: fallbackText,
+            source: toolName,
+            title: "MCP tool result",
+          },
+        ]
+      : [],
+    text: fallbackText,
+    toolName,
+  };
 }
 
 function normalizeStructuredItems(value: unknown): MCPToolResultItem[] {
@@ -531,6 +645,14 @@ function extractContentText(content: unknown): string {
     })
     .filter(Boolean)
     .join("\n\n");
+}
+
+function safeJSONStringify(value: unknown): string {
+  try {
+    return JSON.stringify(value, null, 2);
+  } catch {
+    return String(value);
+  }
 }
 
 async function fetchWithTimeout(

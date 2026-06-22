@@ -1,34 +1,37 @@
-# Zotero-WebAI
+# Zotero WebAI
 
-Zotero-WebAI is a Zotero 9 reading workspace that embeds DeepSeek Web and Z.ai Web beside the current Zotero library item or PDF reader. It provides Web login, custom slash skills, and default MCP HTTP tooling.
+Chinese README: [README.zh-CN.md](README.zh-CN.md).
 
-No model key is required. Sign in inside the embedded DeepSeek Web or Z.ai Web page, type your message in the Zotero-WebAI chat box, and use `/` to apply your custom skills.
+Zotero WebAI is a Zotero 9 reading workspace that embeds DeepSeek Web and Z.ai Web beside the current Zotero library item or PDF reader. It requires no model API key: sign in inside the embedded web page and use the Zotero-side chat box to send Zotero context, custom skills, and MCP-backed tool results into the web chat.
 
 ## Features
 
-- Tab-bar button on the right side of Zotero's tab strip opens the Zotero-WebAI right sidebar.
-- Reader and library right sidebar adapts to the current PDF, paper, selection, or collection.
-- Embedded DeepSeek Web and Z.ai Web login with external-open fallback.
-- Custom Skill manager in settings.
-- Slash menu in the chat box: type `/` to choose a custom Skill and insert a Zotero-context prompt into the embedded web chat.
-- MCP Streamable HTTP defaults to `http://127.0.0.1:23120/mcp` and is automatically added to outgoing chat prompts when the local MCP server is available.
-- No DeepSeek/Z.ai model API configuration.
+- A small button on the right side of Zotero's tab bar opens an adaptive right sidebar.
+- Works in the library and PDF reader, using the current item, PDF text, selected passage, imported PDF, or collection context.
+- Embedded DeepSeek Web and Z.ai Web login with an external-browser fallback.
+- Custom Skills in settings; type `/` in the chat box to select a Skill.
+- Up to 1000 custom Skills.
+- Real MCP bridge for `zotero-mcp`: Zotero WebAI reads `tools/list`, lets the web model decide tool names and arguments, executes `tools/call` locally, then inserts the real result back into the web chat.
+- Results panel for MCP outputs, Skill prompts/results, captured web answers, and raw MCP payloads.
+- No DeepSeek/Z.ai API configuration.
 
 ## Usage
 
 1. Install the generated `.xpi` in Zotero 9 from `Tools -> Add-ons -> Install Add-on From File...`.
-2. Open a PDF or select a library item.
-3. Click the small Zotero-WebAI button on the right side of the tab bar.
-4. Sign in to DeepSeek Web or Z.ai Web in the sidebar.
-5. Open Zotero-WebAI settings and add custom Skills.
-6. Type `/` in the Zotero-WebAI chat box to choose a Skill, then send the generated prompt into the embedded web chat.
+2. Start `zotero-mcp` locally if you want MCP tools available.
+3. Open a PDF or select a library item.
+4. Click the Zotero WebAI button on the right side of the tab bar.
+5. Sign in to DeepSeek Web or Z.ai Web in the sidebar.
+6. Add custom Skills in settings, then type `/` in the Zotero WebAI chat box to select one.
+7. Send a prompt. Zotero WebAI inserts the prompt, tries to submit it, captures the web answer, and records MCP/Skill results in the Results panel.
 
 ## MCP
 
-Zotero-WebAI defaults to the local streamable HTTP MCP endpoint used by `zotero-mcp`.
-When MCP is selected in settings, Zotero-WebAI embeds the full `tools/list` catalog, including each tool schema, into the prompt inserted into DeepSeek Web or Z.ai Web. The web model decides whether a Zotero MCP tool is needed and chooses the tool name and schema-valid arguments. Zotero-WebAI then executes the emitted MCP request block automatically and inserts the tool result back into the web chat. If the local MCP server is not running, the chat prompt still sends with Zotero context only.
+Zotero WebAI defaults to the local Streamable HTTP endpoint used by `zotero-mcp`.
 
-The settings pane only asks for the endpoint and optional bearer token. A read-only initial prefetch uses `search_library` with `limit: 1000` as the default context helper, while every tool returned by `tools/list` remains available for model-selected MCP calls.
+When MCP is enabled, Zotero WebAI embeds the full `tools/list` catalog, including each tool schema, into the prompt inserted into DeepSeek Web or Z.ai Web. The web model decides whether a Zotero MCP tool is needed and chooses the tool name and schema-valid arguments. Zotero WebAI detects the emitted MCP request block, calls the local MCP server with `tools/call`, shows the normalized and raw result in the Results panel, and inserts the result back into the web chat so the model can continue answering.
+
+A read-only initial prefetch uses `search_library` with `limit: 1000` as the default context helper. Every tool returned by `tools/list` remains available for model-selected MCP calls.
 
 Default MCP server setting:
 
@@ -56,9 +59,9 @@ Default tool argument template:
 
 ```bash
 npm install
-npm test
 npm run build
-npm run verify:xpi
 ```
 
 The XPI is emitted under `.scaffold/build/`.
+
+Build outputs are intentionally not tracked in this repository. Download packaged `.xpi` files from GitHub Releases.

@@ -1,1 +1,1 @@
-ai-assistant-toggle-shortcut = Toggle Zotero-WebAI
+ai-assistant-toggle-shortcut = Toggle Zotero WebAI

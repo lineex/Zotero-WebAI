@@ -1,21 +1,11 @@
 import { defineConfig } from "zotero-plugin-scaffold";
 import pkg from "./package.json";
-import { buildDevServerStartArgs } from "./src/config/devServerArgs";
-import { buildDevProfilePrefs } from "./src/config/devProfilePrefs";
-import { buildAddonVersionMetadata } from "./scripts/build-version-lib.mjs";
 
 declare const process: {
   env: Record<string, string | undefined>;
 };
 
-const prefsPrefix = pkg.config.prefsPrefix;
-const devStartArgs = buildDevServerStartArgs(process.env.ZOTERO_DEBUGGER);
-const devProfilePrefs = buildDevProfilePrefs({ prefsPrefix });
-const addonVersion = buildAddonVersionMetadata({
-  baseVersion: pkg.version,
-  env: process.env,
-});
-const xpiName = `${pkg.config.addonName.replace(/\s+/g, ".")}-${addonVersion.xpiVersion}`;
+const xpiName = `${pkg.config.addonName.replace(/\s+/g, ".")}-${pkg.version}`;
 
 const config: ReturnType<typeof defineConfig> = defineConfig({
   source: ["src", "addon"],
@@ -24,7 +14,7 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
   id: pkg.config.addonID,
   namespace: pkg.config.addonRef,
   xpiName,
-  updateURL: `https://github.com/{{owner}}/{{repo}}/releases/download/release/${addonVersion.updateJsonName}`,
+  updateURL: "https://github.com/{{owner}}/{{repo}}/releases/download/release/update.json",
   xpiDownloadLink:
     "https://github.com/{{owner}}/{{repo}}/releases/download/v{{version}}/{{xpiName}}.xpi",
 
@@ -35,8 +25,8 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
       author: pkg.author,
       description: pkg.description,
       homepage: pkg.homepage,
-      buildVersion: addonVersion.manifestVersion,
-      buildVersionName: addonVersion.displayVersion,
+      buildVersion: pkg.version,
+      buildVersionName: pkg.version,
       buildTime: "{{buildTime}}",
     },
     fluent: {
@@ -59,12 +49,9 @@ const config: ReturnType<typeof defineConfig> = defineConfig({
   },
 
   server: {
-    // Keep dev-only bootstrap here so the built addon never reads from .env.
-    // Do not inject plugin prefs into the user's daily profile during proxy-mode runs.
-    // On macOS we still need the explicit flag to avoid falling back to another profile.
     devtools: false,
-    startArgs: devStartArgs,
-    prefs: devProfilePrefs,
+    startArgs: ["-no-remote"],
+    prefs: {},
     asProxy: true,
     createProfileIfMissing: true,
   },

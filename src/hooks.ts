@@ -50,7 +50,7 @@ async function onStartup() {
       pluginID: addon.data.config.addonID,
       src: `chrome://${addon.data.config.addonRef}/content/preferences.xhtml`,
       id: `${addon.data.config.addonRef}-prefpane`,
-      label: "Zotero-WebAI",
+      label: "Zotero WebAI",
       image: BRANDED_PREFERENCES_ICON,
     });
     ztoolkit.log("Preferences pane registered");

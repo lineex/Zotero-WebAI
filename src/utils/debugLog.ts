@@ -262,7 +262,7 @@ function forwardToHostLog(entry: DebugLogEntry): void {
     if (typeof logger !== "function") {
       return;
     }
-    logger("[Zotero-WebAI debug]", entry);
+    logger("[Zotero WebAI debug]", entry);
   } catch {
     // Host logging is best-effort.
   }

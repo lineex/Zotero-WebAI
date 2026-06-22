@@ -309,7 +309,7 @@ export function stringifyEditableCustomPresets(
 
 export function buildCustomCommandAIPrompt(): string {
   return [
-    "Create Zotero-WebAI custom slash commands as a JSON array",
+    "Create Zotero WebAI custom slash commands as a JSON array",
     "Output JSON only, with no Markdown fences and no explanation",
     "Each object may include id, label, description, promptPrefix, aliases, scopeHint, showInSidebar, and evidenceHint",
     'Use lower-case hyphenated ids, aliases as an array, and scopeHint values from ["paper","pdf","collection","manual-selection"]',

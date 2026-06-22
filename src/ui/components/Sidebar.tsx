@@ -234,7 +234,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
             <div style={styles.headerBrand}>
               <img alt="" src={BRAND_ICON_SRC} style={styles.headerBrandIcon} />
               <div style={{ ...styles.headerTitle, color: theme.text }}>
-                Zotero-WebAI
+                Zotero WebAI
               </div>
             </div>
             <div style={{ ...styles.headerMeta, color: theme.mutedText }}>
@@ -380,7 +380,7 @@ class SidebarErrorBoundary extends React.Component<
       return (
         <div style={styles.errorBoundary}>
           <div style={styles.errorBoundaryTitle}>
-            Zotero-WebAI sidebar unavailable
+            Zotero WebAI sidebar unavailable
           </div>
           <div style={styles.errorBoundaryMessage}>{this.state.message}</div>
         </div>

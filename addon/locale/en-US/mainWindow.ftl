@@ -1,7 +1,7 @@
 ai-assistant-sidebar-title =
-    .label = Zotero-WebAI
+    .label = Zotero WebAI
 ai-assistant-sidebar-sidenav =
-    .tooltiptext = Zotero-WebAI
+    .tooltiptext = Zotero WebAI
 ai-assistant-empty-state = Select a paper or collection to start chatting
 ai-assistant-scope-pdf = Current PDF
 ai-assistant-scope-paper = Paper

@@ -80,7 +80,7 @@ const SLASH_CUSTOM_ID = "zotero-ai-assistant-pref-slash-custom";
 const SLASH_ADD_ID = "zotero-ai-assistant-pref-slash-add";
 const SLASH_LIMIT_STATUS_ID = "zotero-ai-assistant-pref-slash-limit-status";
 
-const MAX_CUSTOM_SLASH_COMMANDS = 10;
+const MAX_CUSTOM_SLASH_COMMANDS = 1000;
 const BUTTON_ACTIVATION_DEDUPE_WINDOW_MS = 300;
 const HTML_NS = "http://www.w3.org/1999/xhtml";
 
@@ -844,7 +844,7 @@ function updateSlashLimitStatus(
     | null;
   const addButton = getField(doc, SLASH_ADD_ID);
   if (status) {
-    status.textContent = "You can add up to 10 custom skills";
+    status.textContent = "You can add up to 1000 custom skills";
   }
   setDisabled(addButton, state.custom.length >= MAX_CUSTOM_SLASH_COMMANDS);
 }

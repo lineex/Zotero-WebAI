@@ -216,7 +216,7 @@ export class UIFactory {
         host,
         location,
         new Error(
-          "Zotero-WebAI could not access the Zotero window while rendering.",
+          "Zotero WebAI could not access the Zotero window while rendering.",
         ),
       );
       return;
@@ -246,7 +246,7 @@ export class UIFactory {
 
     void this.ensureHostBootstrapped(win, host, location).catch((error) => {
       ztoolkit.log(
-        `Failed to bootstrap Zotero-WebAI ${location} section host:`,
+        `Failed to bootstrap Zotero WebAI ${location} section host:`,
         error,
       );
       this.renderBootstrapFailure(host, location, error);
@@ -289,7 +289,7 @@ export class UIFactory {
       );
     } catch (error) {
       ztoolkit.log(
-        "Failed to register Zotero-WebAI tab refresh observer:",
+        "Failed to register Zotero WebAI tab refresh observer:",
         error,
       );
       win.__aiAssistantTabObserverId = null;
@@ -336,7 +336,7 @@ export class UIFactory {
     };
     const button = (doc.createXULElement?.("toolbarbutton") ??
       doc.createElement("button")) as HTMLElement;
-    const title = "Open Zotero-WebAI sidebar";
+    const title = "Open Zotero WebAI sidebar";
 
     button.id = TAB_BAR_BUTTON_ID;
     button.className = TAB_BAR_BUTTON_CLASS;
@@ -425,7 +425,7 @@ export class UIFactory {
       this.clickSidebarSectionButton(win);
       await this.requestSectionRefresh(win);
     } catch (error) {
-      ztoolkit.log("Failed to open Zotero-WebAI sidebar from tab bar:", error);
+      ztoolkit.log("Failed to open Zotero WebAI sidebar from tab bar:", error);
     }
   }
 
@@ -771,7 +771,7 @@ export class UIFactory {
     try {
       await windowSectionRefresh.get(win)?.();
     } catch (error) {
-      ztoolkit.log("Failed to refresh Zotero-WebAI section state:", error);
+      ztoolkit.log("Failed to refresh Zotero WebAI section state:", error);
     }
   }
 
@@ -827,7 +827,7 @@ export class UIFactory {
 
     void this.ensureHostBootstrapped(win, host, "library").catch((error) => {
       ztoolkit.log(
-        "Failed to bootstrap Zotero-WebAI library empty-state host:",
+        "Failed to bootstrap Zotero WebAI library empty-state host:",
         error,
       );
       this.renderBootstrapFailure(host, "library", error);

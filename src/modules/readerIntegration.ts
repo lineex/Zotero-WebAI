@@ -175,7 +175,7 @@ function onRenderTextSelectionPopup(event: ReaderSelectionPopupEvent): void {
   const zh = isChineseLocale();
 
   const label = doc.createElement("span");
-  label.textContent = "Zotero-WebAI";
+  label.textContent = "Zotero WebAI";
   label.style.cssText =
     "font-size: 0.92em; color: inherit; opacity: 0.72; user-select: none; padding-left: 4px;";
   container.appendChild(label);
@@ -236,7 +236,7 @@ function onCreateViewContextMenu(event: ReaderViewContextMenuEvent): void {
   const appendMenuItems = append as unknown as (...items: unknown[]) => void;
   appendMenuItems(
     {
-      label: zh ? "用 Zotero-WebAI 解释" : "Explain with Zotero-WebAI",
+      label: zh ? "用 Zotero WebAI 解释" : "Explain with Zotero WebAI",
       disabled: !hasSelection,
       persistent: true,
       onCommand: () => {
@@ -255,7 +255,7 @@ function onCreateViewContextMenu(event: ReaderViewContextMenuEvent): void {
       },
     },
     {
-      label: zh ? "向 Zotero-WebAI 提问..." : "Ask Zotero-WebAI...",
+      label: zh ? "向 Zotero WebAI 提问..." : "Ask Zotero WebAI...",
       disabled: !hasSelection,
       persistent: true,
       onCommand: () => {
@@ -293,7 +293,7 @@ function onRenderToolbar(event: ReaderToolbarEvent): void {
   }
 
   const zh = isChineseLocale();
-  const title = zh ? "打开 Zotero-WebAI" : "Open Zotero-WebAI";
+  const title = zh ? "打开 Zotero WebAI" : "Open Zotero WebAI";
   const button = doc.createElement("button");
   button.id = buttonId;
   button.type = "button";
@@ -342,7 +342,7 @@ function openReaderSidebar(reader?: ReaderLike): void {
       paneID: SECTION_PANE_ID,
       surface: "reader",
     });
-    ztoolkit.log("Failed to open Zotero-WebAI reader sidebar:", error);
+    ztoolkit.log("Failed to open Zotero WebAI reader sidebar:", error);
   }
 }
 

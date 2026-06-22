@@ -1,10 +1,11 @@
 import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { AssembledContext } from "../../services/contextAssembler";
 import {
-  callMCPToolByName,
-  callMCPToolWithFallback,
+  callMCPToolDetailed,
+  callMCPToolDetailedWithFallback,
   listMCPTools,
-  type MCPToolCallOutcome,
+  type MCPToolDetailedCallOutcome,
+  type MCPToolDetailedResult,
   type MCPToolResultItem,
   type MCPToolSummary,
 } from "../../services/mcpClient";
@@ -54,11 +55,36 @@ interface PromptInsertResult {
   method?: string;
   ok: boolean;
   reason?: string;
+  submitted?: boolean;
 }
 
 interface MCPPromptContextResult {
   contextText: string;
   status: string | null;
+}
+
+type WebAIExecutionKind = "assistant" | "mcp" | "skill" | "error";
+
+interface WebAIExecutionRecord {
+  body: string;
+  createdAt: string;
+  id: string;
+  kind: WebAIExecutionKind;
+  raw?: string;
+  status: "done" | "error" | "running";
+  subtitle?: string;
+  title: string;
+}
+
+type WebAIExecutionRecordDraft = Omit<
+  WebAIExecutionRecord,
+  "createdAt" | "id"
+>;
+
+interface AssistantReplyRecordOptions {
+  kind?: WebAIExecutionKind;
+  subtitle?: string;
+  title?: string;
 }
 
 interface WebChatTextResult {
@@ -93,7 +119,8 @@ const MCP_SCHEMA_TEXT_LIMIT = 2200;
 const MCP_TOOL_CATALOG_TEXT_LIMIT = 52000;
 const MCP_QUERY_TEXT_LIMIT = 3000;
 const MCP_BRIDGE_SCAN_TEXT_LIMIT = 120000;
-const MCP_BRIDGE_POLL_MS = 3500;
+const MCP_BRIDGE_POLL_MS = 900;
+const EXECUTION_RECORD_LIMIT = 24;
 const SERVICES: WebAIService[] = [
   {
     id: "deepseek",
@@ -121,11 +148,26 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [isError, setIsError] = useState(false);
   const [message, setMessage] = useState("");
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
+  const [executionRecords, setExecutionRecords] = useState<
+    WebAIExecutionRecord[]
+  >([]);
   const frameHostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<Element | null>(null);
   const activeMCPBridgeTokensRef = useRef<Set<string>>(new Set());
+  const assistantCaptureRunRef = useRef(0);
   const handledMCPRequestsRef = useRef<Set<string>>(new Set());
+  const lastCapturedAssistantTextRef = useRef("");
   const theme = getSidebarTheme(hostWindow);
+
+  const appendExecutionRecord = (
+    draft: WebAIExecutionRecordDraft,
+  ): string => {
+    const record = createExecutionRecord(draft);
+    setExecutionRecords((current) =>
+      [record, ...current].slice(0, EXECUTION_RECORD_LIMIT),
+    );
+    return record.id;
+  };
 
   const customSkills = useMemo(
     () => buildCustomSkills(customPresets),
@@ -220,6 +262,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           }
           handledMCPRequestsRef.current.add(request.id);
           await runMCPBridgeRequest({
+            appendExecutionRecord,
             deliverPrompt,
             request,
             serviceLabel: service.label,
@@ -244,19 +287,95 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     };
   }, [service.label, settings]);
 
-  const deliverPrompt = async (prompt: string, statusPrefix?: string | null) => {
+  const recordAssistantReply = (
+    captured: string,
+    options: AssistantReplyRecordOptions = {},
+  ) => {
+    const normalized = captured.trim();
+    if (!normalized || normalized === lastCapturedAssistantTextRef.current) {
+      return false;
+    }
+    lastCapturedAssistantTextRef.current = normalized;
+    appendExecutionRecord({
+      body: normalized,
+      kind: options.kind || "assistant",
+      status: "done",
+      subtitle: options.subtitle || service.label,
+      title: options.title || "Captured web answer",
+    });
+    return true;
+  };
+
+  const waitForAssistantReply = async (
+    baselineText?: string,
+    options?: AssistantReplyRecordOptions,
+  ) => {
+    const runId = ++assistantCaptureRunRef.current;
+    try {
+      setStatus(`Waiting for ${service.label} answer...`);
+      const captured = await waitForStableAssistantText(
+        frameRef.current,
+        baselineText || "",
+        () => runId === assistantCaptureRunRef.current,
+      );
+      if (!captured || runId !== assistantCaptureRunRef.current) {
+        return;
+      }
+      if (recordAssistantReply(captured, options)) {
+        setStatus(`Captured latest ${service.label} answer into Zotero WebAI.`);
+      }
+    } catch (error) {
+      ztoolkit.log("Web AI automatic capture failed:", error);
+      if (runId === assistantCaptureRunRef.current) {
+        setStatus(
+          `Prompt sent. If the answer is not captured automatically, click Capture.`,
+        );
+      }
+    }
+  };
+
+  const deliverPrompt = async (
+    prompt: string,
+    statusPrefix?: string | null,
+    captureOptions?: AssistantReplyRecordOptions,
+  ) => {
+    const baselineText = await readWebChatText(frameRef.current)
+      .then((result) => (result.ok ? result.text || "" : ""))
+      .catch(() => "");
     copyTextToClipboard(prompt);
-    const result = await insertPromptIntoWebChat(frameRef.current, prompt);
+    const result = await insertPromptIntoWebChat(frameRef.current, prompt, true);
     focusFrame(frameRef.current);
-    if (result.ok) {
+    if (result.ok && result.submitted) {
       setStatus(
-        `${statusPrefix ? `${statusPrefix} ` : ""}Prompt inserted into ${service.label}. Review it, then send in the web chat.`,
+        `${statusPrefix ? `${statusPrefix} ` : ""}Prompt sent to ${service.label}; waiting for result.`,
+      );
+      void waitForAssistantReply(baselineText, captureOptions);
+    } else if (result.ok) {
+      setStatus(
+        `${statusPrefix ? `${statusPrefix} ` : ""}Prompt inserted into ${service.label}. Send it in the web chat, then click Capture if needed.`,
       );
     } else {
       setStatus(
         `${statusPrefix ? `${statusPrefix} ` : ""}Prompt copied (${prompt.length} characters). If it did not appear in ${service.label}, click the web chat box and paste.`,
       );
     }
+    setIsError(false);
+  };
+
+  const captureAssistantReply = async () => {
+    const result = await readWebChatText(frameRef.current);
+    if (!result.ok || !result.text?.trim()) {
+      throw new Error(result.reason || "No web chat text available");
+    }
+    const captured = extractLatestAssistantText(result.text);
+    if (!captured) {
+      throw new Error("No assistant result found in the embedded web chat");
+    }
+    recordAssistantReply(
+      captured,
+      selectedSkill ? buildSkillReplyRecordOptions(selectedSkill, service.label) : {},
+    );
+    setStatus(`Captured latest ${service.label} answer into Zotero WebAI.`);
     setIsError(false);
   };
 
@@ -290,6 +409,20 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       scope,
       selectedSkill: resolved.skill,
     };
+    if (resolved.skill) {
+      appendExecutionRecord({
+        body: formatSkillExecutionBody({
+          contextSummary,
+          message: resolved.message,
+          scope,
+          skill: resolved.skill,
+        }),
+        kind: "skill",
+        status: "done",
+        subtitle: `/${resolved.skill.slashCommand}`,
+        title: `Skill: ${resolved.skill.label}`,
+      });
+    }
     const mcpBridgeToken = shouldUseMCPInConversation(settings)
       ? createMCPBridgeToken()
       : "";
@@ -298,6 +431,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       mcpContext: "",
     });
     const mcpContext = await fetchMCPContextForConversation(settings, {
+      appendExecutionRecord,
       ...promptInput,
       mcpBridgeToken,
       setStatus,
@@ -311,7 +445,13 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           mcpContext: mcpContext.contextText,
         })
       : basePrompt;
-    await deliverPrompt(prompt, mcpContext.status);
+    await deliverPrompt(
+      prompt,
+      mcpContext.status,
+      resolved.skill
+        ? buildSkillReplyRecordOptions(resolved.skill, service.label)
+        : undefined,
+    );
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
@@ -388,6 +528,32 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               borderColor: theme.buttonBorder,
               color: theme.buttonText,
             }}
+            onClick={() => void runAction(captureAssistantReply)}
+            type="button"
+          >
+            Capture
+          </button>
+          {executionRecords.length > 0 && (
+            <button
+              style={{
+                ...styles.miniButton,
+                background: theme.surfaceBackground,
+                borderColor: theme.buttonBorder,
+                color: theme.buttonText,
+              }}
+              onClick={() => setExecutionRecords([])}
+              type="button"
+            >
+              Clear
+            </button>
+          )}
+          <button
+            style={{
+              ...styles.miniButton,
+              background: theme.surfaceBackground,
+              borderColor: theme.buttonBorder,
+              color: theme.buttonText,
+            }}
             onClick={() => openExternalURL(service.url)}
             type="button"
           >
@@ -395,6 +561,89 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           </button>
         </div>
       </div>
+
+      {executionRecords.length > 0 && (
+        <div
+          style={{
+            ...styles.executionPanel,
+            background: theme.surfaceBackground,
+            borderColor: theme.softBorder,
+          }}
+        >
+          <div style={styles.executionHeader}>
+            <span style={{ ...styles.executionTitle, color: theme.text }}>
+              Results
+            </span>
+            <span style={{ ...styles.executionMeta, color: theme.mutedText }}>
+              MCP and Skill outputs
+            </span>
+          </div>
+          <div style={styles.executionList}>
+            {executionRecords.map((record, index) => (
+              <details
+                key={record.id}
+                open={index === 0}
+                style={{
+                  ...styles.executionItem,
+                  borderColor:
+                    record.status === "error"
+                      ? theme.errorText
+                      : theme.softBorder,
+                }}
+              >
+                <summary style={styles.executionSummary}>
+                  <span
+                    style={{
+                      ...styles.executionKind,
+                      background:
+                        record.kind === "mcp"
+                          ? theme.accentBackground
+                          : record.kind === "skill"
+                            ? theme.badgeBackground
+                            : theme.surfaceBackground,
+                      borderColor: theme.buttonBorder,
+                      color:
+                        record.status === "error"
+                          ? theme.errorText
+                          : theme.text,
+                    }}
+                  >
+                    {record.kind}
+                  </span>
+                  <span style={styles.executionSummaryText}>
+                    <span style={{ ...styles.executionItemTitle, color: theme.text }}>
+                      {record.title}
+                    </span>
+                    {record.subtitle && (
+                      <span
+                        style={{
+                          ...styles.executionItemSubtitle,
+                          color: theme.mutedText,
+                        }}
+                      >
+                        {record.subtitle}
+                      </span>
+                    )}
+                  </span>
+                </summary>
+                <pre style={{ ...styles.executionBody, color: theme.text }}>
+                  {record.body}
+                </pre>
+                {record.raw && (
+                  <details style={styles.executionRaw}>
+                    <summary style={{ ...styles.executionRawSummary, color: theme.mutedText }}>
+                      Raw result
+                    </summary>
+                    <pre style={{ ...styles.executionBody, color: theme.text }}>
+                      {record.raw}
+                    </pre>
+                  </details>
+                )}
+              </details>
+            ))}
+          </div>
+        </div>
+      )}
 
       <div
         style={{
@@ -639,29 +888,31 @@ function focusFrame(frame: Element | null): void {
 async function insertPromptIntoWebChat(
   frame: Element | null,
   prompt: string,
+  submit = false,
 ): Promise<PromptInsertResult> {
   if (!frame) {
     return { ok: false, reason: "web-frame-missing" };
   }
 
-  const directResult = insertPromptDirectly(frame, prompt);
+  const directResult = insertPromptDirectly(frame, prompt, submit);
   if (directResult.ok) {
     return directResult;
   }
 
-  return insertPromptWithFrameScript(frame, prompt);
+  return insertPromptWithFrameScript(frame, prompt, submit);
 }
 
 function insertPromptDirectly(
   frame: Element,
   prompt: string,
+  submit: boolean,
 ): PromptInsertResult {
   try {
     const doc = (frame as HTMLIFrameElement).contentWindow?.document;
     if (!doc) {
       return { ok: false, reason: "content-document-missing" };
     }
-    return insertPromptIntoDocument(doc, prompt, "direct-dom");
+    return insertPromptIntoDocument(doc, prompt, "direct-dom", submit);
   } catch (error) {
     return {
       ok: false,
@@ -676,6 +927,7 @@ function insertPromptDirectly(
 function insertPromptWithFrameScript(
   frame: Element,
   prompt: string,
+  submit: boolean,
 ): Promise<PromptInsertResult> {
   const messageManager = getFrameMessageManager(frame);
   const addMessageListener = messageManager?.addMessageListener;
@@ -691,7 +943,7 @@ function insertPromptWithFrameScript(
   const messageName = `ZoteroWebAI:PromptInsert:${Date.now()}:${Math.random()
     .toString(36)
     .slice(2)}`;
-  const source = buildPromptInsertFrameScript(messageName, prompt);
+  const source = buildPromptInsertFrameScript(messageName, prompt, submit);
 
   return new Promise((resolve) => {
     const timerHost = resolveTimerHost();
@@ -910,14 +1162,16 @@ function resolveTimerHost(): {
 function buildPromptInsertFrameScript(
   messageName: string,
   prompt: string,
+  submit: boolean,
 ): string {
   return `
 (function () {
   const messageName = ${JSON.stringify(messageName)};
   const prompt = ${JSON.stringify(prompt)};
+  const submit = ${JSON.stringify(submit)};
   ${insertPromptIntoDocumentSource()}
   try {
-    const result = insertPromptIntoDocument(content.document, prompt, "frame-script");
+    const result = insertPromptIntoDocument(content.document, prompt, "frame-script", submit);
     sendAsyncMessage(messageName, result);
   } catch (error) {
     sendAsyncMessage(messageName, {
@@ -952,13 +1206,15 @@ function insertPromptIntoDocument(
   doc: Document,
   prompt: string,
   method: string,
+  submit = false,
 ): PromptInsertResult {
   const composer = findWebChatComposer(doc);
   if (!composer) {
     return { ok: false, method, reason: "composer-not-found" };
   }
   writePromptToComposer(composer, prompt);
-  return { ok: true, method };
+  const submitted = submit ? submitWebChatPrompt(doc, composer) : false;
+  return { ok: true, method, submitted };
 }
 
 function readWebChatTextFromDocument(doc: Document): string {
@@ -997,6 +1253,87 @@ function findWebChatComposer(doc: Document): HTMLElement | null {
       (left, right) => scoreComposerCandidate(right) - scoreComposerCandidate(left),
     );
   return visibleCandidates[0] || null;
+}
+
+function submitWebChatPrompt(doc: Document, composer: HTMLElement): boolean {
+  const buttons = Array.from(
+    doc.querySelectorAll("button, [role='button']"),
+  ) as HTMLElement[];
+  const visibleButtons = buttons
+    .filter(isVisibleSubmitCandidate)
+    .sort((left, right) => scoreSubmitCandidate(right) - scoreSubmitCandidate(left));
+  const submitButton = visibleButtons[0] || null;
+  if (submitButton) {
+    submitButton.click();
+    return true;
+  }
+
+  const win = doc.defaultView;
+  try {
+    composer.dispatchEvent(
+      new (win?.KeyboardEvent || KeyboardEvent)("keydown", {
+        bubbles: true,
+        cancelable: true,
+        code: "Enter",
+        key: "Enter",
+      }),
+    );
+    composer.dispatchEvent(
+      new (win?.KeyboardEvent || KeyboardEvent)("keyup", {
+        bubbles: true,
+        cancelable: true,
+        code: "Enter",
+        key: "Enter",
+      }),
+    );
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function isVisibleSubmitCandidate(element: HTMLElement): boolean {
+  const rect = element.getBoundingClientRect();
+  const doc = element.ownerDocument;
+  if (!doc) {
+    return false;
+  }
+  const style = doc.defaultView?.getComputedStyle(element);
+  const label = [
+    element.getAttribute("aria-label"),
+    element.getAttribute("title"),
+    element.textContent,
+  ]
+    .join(" ")
+    .toLowerCase();
+  const disabled =
+    element.hasAttribute("disabled") ||
+    element.getAttribute("aria-disabled") === "true";
+  return Boolean(
+    !disabled &&
+      rect.width >= 18 &&
+      rect.height >= 18 &&
+      style?.display !== "none" &&
+      style?.visibility !== "hidden" &&
+      !element.closest("[aria-hidden='true']") &&
+      /(send|submit|发送|送出|arrow|paper|chat)/i.test(label),
+  );
+}
+
+function scoreSubmitCandidate(element: HTMLElement): number {
+  const rect = element.getBoundingClientRect();
+  const label = [
+    element.getAttribute("aria-label"),
+    element.getAttribute("title"),
+    element.textContent,
+  ]
+    .join(" ")
+    .toLowerCase();
+  let score = rect.bottom * 10 + rect.right;
+  if (/(send|发送|submit)/i.test(label)) score += 100000;
+  if (/(arrow|paper|plane)/i.test(label)) score += 20000;
+  if (element.tagName.toLowerCase() === "button") score += 10000;
+  return score;
 }
 
 function isVisibleComposerCandidate(element: HTMLElement): boolean {
@@ -1086,6 +1423,9 @@ ${isVisibleComposerCandidate.toString()}
 ${scoreComposerCandidate.toString()}
 ${writePromptToComposer.toString()}
 ${dispatchComposerEvents.toString()}
+${submitWebChatPrompt.toString()}
+${isVisibleSubmitCandidate.toString()}
+${scoreSubmitCandidate.toString()}
 ${insertPromptIntoDocument.toString()}`;
 }
 
@@ -1193,12 +1533,14 @@ function parseMCPBridgePayload(
 }
 
 async function runMCPBridgeRequest({
+  appendExecutionRecord,
   deliverPrompt,
   request,
   serviceLabel,
   settings,
   setStatus,
 }: {
+  appendExecutionRecord: (draft: WebAIExecutionRecordDraft) => string;
   deliverPrompt: (prompt: string, statusPrefix?: string | null) => Promise<void>;
   request: MCPBridgeRequest;
   serviceLabel: string;
@@ -1207,12 +1549,22 @@ async function runMCPBridgeRequest({
 }): Promise<void> {
   try {
     setStatus(`Running Zotero MCP tool ${request.toolName}...`);
-    const results = await callMCPToolByName(
+    const detailed = await callMCPToolDetailed(
       settings,
       request.toolName,
       request.arguments,
     );
-    const prompt = formatMCPBridgeResultPrompt(request, results);
+    appendExecutionRecord({
+      body: formatMCPDetailedRecordBody(detailed, {
+        arguments: request.arguments,
+      }),
+      kind: "mcp",
+      raw: formatMCPRawResult(detailed),
+      status: "done",
+      subtitle: `tools/call ${request.toolName}`,
+      title: `MCP result: ${request.toolName}`,
+    });
+    const prompt = formatMCPBridgeResultPrompt(request, detailed.results);
     await deliverPrompt(
       prompt,
       `MCP ${request.toolName} result inserted into ${serviceLabel}.`,
@@ -1221,13 +1573,20 @@ async function runMCPBridgeRequest({
     const message =
       error instanceof Error && error.message ? error.message : String(error);
     const prompt = [
-      "Zotero-WebAI MCP tool error:",
+      "Zotero WebAI MCP tool error:",
       `Tool: ${request.toolName}`,
       `Arguments: ${safeJSONStringify(request.arguments)}`,
       `Error: ${message}`,
       "",
       "Please revise the MCP request if another Zotero tool or different arguments are needed, or continue without this tool if enough context is available.",
     ].join("\n");
+    appendExecutionRecord({
+      body: prompt,
+      kind: "error",
+      status: "error",
+      subtitle: `tools/call ${request.toolName}`,
+      title: `MCP failed: ${request.toolName}`,
+    });
     await deliverPrompt(prompt, `MCP ${request.toolName} failed.`);
   }
 }
@@ -1238,12 +1597,11 @@ function formatMCPBridgeResultPrompt(
 ): string {
   const resultText =
     formatMCPPromptContext(results, {
-      results,
       toolName: request.toolName,
       usedFallback: false,
     }) || "MCP tool returned no structured or text content.";
   return [
-    "Zotero-WebAI MCP tool result:",
+    "Zotero WebAI MCP tool result:",
     `Tool: ${request.toolName}`,
     `Arguments: ${safeJSONStringify(request.arguments)}`,
     "",
@@ -1262,6 +1620,7 @@ function createMCPBridgeToken(): string {
 async function fetchMCPContextForConversation(
   settings: Settings,
   {
+    appendExecutionRecord,
     contextSummary,
     mcpBridgeToken,
     message,
@@ -1269,6 +1628,7 @@ async function fetchMCPContextForConversation(
     selectedSkill,
     setStatus,
   }: {
+    appendExecutionRecord: (draft: WebAIExecutionRecordDraft) => string;
     contextSummary: AssembledContext | null;
     mcpBridgeToken: string;
     message: string;
@@ -1302,7 +1662,17 @@ async function fetchMCPContextForConversation(
 
     try {
       setStatus("Fetching initial Zotero MCP context for this conversation...");
-      const outcome = await callMCPToolWithFallback(settings, query, tools);
+      const outcome = await callMCPToolDetailedWithFallback(settings, query, tools);
+      appendExecutionRecord({
+        body: formatMCPDetailedRecordBody(outcome, {
+          usedFallback: outcome.usedFallback,
+        }),
+        kind: "mcp",
+        raw: formatMCPRawResult(outcome),
+        status: "done",
+        subtitle: outcome.usedFallback ? "automatic fallback" : "automatic context",
+        title: `MCP context: ${outcome.toolName}`,
+      });
       const contextText = formatMCPPromptContext(outcome.results, outcome);
       return {
         contextText: [planningContext, contextText].filter(Boolean).join("\n\n"),
@@ -1364,8 +1734,8 @@ function buildMCPPlanningContext(
   const catalog = formatMCPToolCatalog(tools);
   return [
     "Zotero MCP bridge:",
-    "Zotero-WebAI can run local Zotero MCP tools for you. The user does not type MCP commands; you decide whether a tool is needed and choose schema-valid arguments.",
-    "If Zotero MCP is needed, do not invent the tool result. Reply only with an MCP request block using the markers named below. Zotero-WebAI will execute it and insert the result back into this chat.",
+    "Zotero WebAI can run local Zotero MCP tools for you. The user does not type MCP commands; you decide whether a tool is needed and choose schema-valid arguments.",
+    "If Zotero MCP is needed, do not invent the tool result. Reply only with an MCP request block using the markers named below. Zotero WebAI will execute it and insert the result back into this chat.",
     "Start marker: ZOTERO_WEBAI_MCP_REQUEST",
     "End marker: END_ZOTERO_WEBAI_MCP_REQUEST",
     `Required JSON fields inside the block: {"token":"${mcpBridgeToken}","id":"short-unique-id","tool":"tool_name","arguments":{...}}`,
@@ -1406,7 +1776,7 @@ function formatMCPToolCatalog(tools: MCPToolSummary[]): string {
 
 function formatMCPPromptContext(
   results: MCPToolResultItem[],
-  outcome?: MCPToolCallOutcome,
+  outcome?: Pick<MCPToolDetailedCallOutcome, "toolName" | "usedFallback">,
 ): string {
   const formattedItems = results
     .map((result, index) => formatMCPPromptItem(result, index))
@@ -1418,7 +1788,7 @@ function formatMCPPromptContext(
     [
       "MCP context:",
       outcome?.toolName ? `Tool used: ${outcome.toolName}` : "",
-      outcome?.usedFallback ? "The configured MCP tool failed, so Zotero-WebAI selected this read-only fallback tool from tools/list." : "",
+      outcome?.usedFallback ? "The configured MCP tool failed, so Zotero WebAI selected this read-only fallback tool from tools/list." : "",
       "Use the following MCP tool output as external/local Zotero context for this conversation. Separate MCP evidence from paper evidence, and mention uncertainty when the MCP output is incomplete.",
       ...formattedItems,
     ].join("\n\n"),
@@ -1483,11 +1853,172 @@ function buildWorkspacePrompt({
 
   if (contextSummary?.fullText && contextSummary.fullText.length > fullText.length) {
     parts.push(
-      "Note: the paper text was truncated by Zotero-WebAI; continue from the available excerpt first.",
+      "Note: the paper text was truncated by Zotero WebAI; continue from the available excerpt first.",
     );
   }
 
   return parts.filter(Boolean).join("\n\n");
+}
+
+function createExecutionRecord(
+  draft: WebAIExecutionRecordDraft,
+): WebAIExecutionRecord {
+  return {
+    ...draft,
+    createdAt: new Date().toISOString(),
+    id: `exec-${Date.now().toString(36)}-${Math.random()
+      .toString(36)
+      .slice(2, 8)}`,
+  };
+}
+
+function formatSkillExecutionBody({
+  contextSummary,
+  message,
+  scope,
+  skill,
+}: {
+  contextSummary: AssembledContext | null;
+  message: string;
+  scope: ScopeContext | null;
+  skill: WebAISkill;
+}): string {
+  const selectedText =
+    scope?.selectedText?.trim() || contextSummary?.selectedText?.trim() || "";
+  return [
+    `Skill: ${skill.label}`,
+    `Command: /${skill.slashCommand}`,
+    "",
+    "Skill instruction:",
+    skill.promptPrefix,
+    message.trim() ? `\nUser message:\n${message.trim()}` : "",
+    scope?.label ? `\nZotero context:\n${scope.label}` : "",
+    contextSummary?.metadata ? `\nMetadata:\n${contextSummary.metadata}` : "",
+    selectedText ? `\nSelected passage:\n${truncateText(selectedText, 2400)}` : "",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function buildSkillReplyRecordOptions(
+  skill: WebAISkill,
+  serviceLabel: string,
+): AssistantReplyRecordOptions {
+  return {
+    kind: "skill",
+    subtitle: `/${skill.slashCommand} via ${serviceLabel}`,
+    title: `Skill result: ${skill.label}`,
+  };
+}
+
+function formatMCPDetailedRecordBody(
+  result: MCPToolDetailedResult,
+  options?: {
+    arguments?: Record<string, unknown>;
+    usedFallback?: boolean;
+  },
+): string {
+  const resultText =
+    formatMCPPromptContext(result.results, {
+      toolName: result.toolName,
+      usedFallback: Boolean(options?.usedFallback),
+    }) ||
+    result.text ||
+    "MCP tool returned no structured or text content.";
+  return [
+    `Tool: ${result.toolName}`,
+    options?.arguments
+      ? `Arguments:\n${safeJSONStringify(options.arguments)}`
+      : "",
+    options?.usedFallback ? "Mode: automatic fallback" : "",
+    "",
+    resultText,
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatMCPRawResult(result: MCPToolDetailedResult): string {
+  return safeJSONStringify({
+    raw: result.raw,
+    results: result.results,
+    text: result.text,
+    toolName: result.toolName,
+  });
+}
+
+function extractLatestAssistantText(text: string): string {
+  const cleaned = text
+    .replace(/ZOTERO_WEBAI_MCP_REQUEST[\s\S]*?END_ZOTERO_WEBAI_MCP_REQUEST/g, "")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+  if (!cleaned) {
+    return "";
+  }
+
+  const markerMatches = [
+    "Zotero WebAI MCP tool result:",
+    "Use this Zotero MCP result to continue answering",
+    "Zotero context:",
+    "Paper content:",
+  ];
+  let lastMarker = "";
+  let lastMarkerIndex = -1;
+  for (const marker of markerMatches) {
+    const markerIndex = cleaned.lastIndexOf(marker);
+    if (markerIndex > lastMarkerIndex) {
+      lastMarker = marker;
+      lastMarkerIndex = markerIndex;
+    }
+  }
+  const candidate =
+    lastMarkerIndex >= 0
+      ? cleaned.slice(lastMarkerIndex + lastMarker.length).trim()
+      : cleaned;
+  return truncateText(candidate || cleaned, MCP_CONTEXT_TEXT_LIMIT);
+}
+
+async function waitForStableAssistantText(
+  frame: Element | null,
+  baselineText: string,
+  shouldContinue: () => boolean,
+): Promise<string> {
+  const baseline = extractLatestAssistantText(baselineText);
+  let bestCandidate = "";
+  let stableReads = 0;
+
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    if (!shouldContinue()) {
+      return "";
+    }
+    await sleepWithHostTimer(attempt < 2 ? 1200 : 1800);
+    const result = await readWebChatText(frame);
+    if (!result.ok || !result.text) {
+      continue;
+    }
+    const candidate = extractLatestAssistantText(result.text);
+    if (!candidate || candidate === baseline || candidate.length < 8) {
+      continue;
+    }
+    if (candidate === bestCandidate) {
+      stableReads += 1;
+    } else {
+      bestCandidate = candidate;
+      stableReads = 0;
+    }
+    if (stableReads >= 1) {
+      return bestCandidate;
+    }
+  }
+
+  return bestCandidate;
+}
+
+function sleepWithHostTimer(timeoutMs: number): Promise<void> {
+  const timerHost = resolveTimerHost();
+  return new Promise((resolve) => {
+    timerHost.setTimeout(resolve, timeoutMs);
+  });
 }
 
 function truncateText(text: string, limit: number): string {
@@ -1495,7 +2026,7 @@ function truncateText(text: string, limit: number): string {
   if (normalized.length <= limit) {
     return normalized;
   }
-  return `${normalized.slice(0, limit)}\n\n[Truncated by Zotero-WebAI]`;
+  return `${normalized.slice(0, limit)}\n\n[Truncated by Zotero WebAI]`;
 }
 
 function safeJSONStringify(value: unknown): string {
@@ -1593,6 +2124,106 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: "26px",
     padding: "3px 9px",
     whiteSpace: "nowrap",
+  },
+  executionPanel: {
+    border: "1px solid #e0e0e0",
+    borderRadius: "8px",
+    display: "flex",
+    flex: "0 0 auto",
+    flexDirection: "column",
+    gap: "8px",
+    maxHeight: "220px",
+    minHeight: 0,
+    overflow: "hidden",
+    padding: "8px",
+  },
+  executionHeader: {
+    alignItems: "center",
+    display: "flex",
+    gap: "8px",
+    justifyContent: "space-between",
+    minWidth: 0,
+  },
+  executionTitle: {
+    fontSize: typography.label,
+    fontWeight: 700,
+    lineHeight: 1.3,
+  },
+  executionMeta: {
+    fontSize: typography.meta,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  executionList: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "6px",
+    minHeight: 0,
+    overflow: "auto",
+  },
+  executionItem: {
+    border: "1px solid #e0e0e0",
+    borderRadius: "6px",
+    padding: "6px",
+  },
+  executionSummary: {
+    alignItems: "center",
+    cursor: "pointer",
+    display: "flex",
+    gap: "8px",
+    listStyle: "none",
+    minWidth: 0,
+  },
+  executionKind: {
+    border: "1px solid #c9c9c9",
+    borderRadius: "4px",
+    flex: "0 0 auto",
+    fontSize: typography.meta,
+    fontWeight: 700,
+    padding: "1px 5px",
+    textTransform: "uppercase",
+  },
+  executionSummaryText: {
+    display: "flex",
+    flex: "1 1 auto",
+    flexDirection: "column",
+    minWidth: 0,
+  },
+  executionItemTitle: {
+    fontSize: typography.label,
+    fontWeight: 700,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  executionItemSubtitle: {
+    fontSize: typography.meta,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  executionBody: {
+    background: "transparent",
+    border: 0,
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace",
+    fontSize: typography.meta,
+    lineHeight: 1.45,
+    margin: "6px 0 0",
+    maxHeight: "180px",
+    overflow: "auto",
+    padding: 0,
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  executionRaw: {
+    marginTop: "6px",
+  },
+  executionRawSummary: {
+    cursor: "pointer",
+    fontSize: typography.meta,
+    fontWeight: 600,
   },
   composerPanel: {
     border: "1px solid #e0e0e0",

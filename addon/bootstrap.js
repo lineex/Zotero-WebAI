@@ -1,12 +1,12 @@
 /**
- * Bootstrap script for the Zotero-WebAI plugin.
+ * Bootstrap script for the Zotero WebAI plugin.
  * Based on Zotero team's Make It Red example and zotero-plugin-toolkit patterns.
  */
 
 var chromeHandle;
 
 function logBootstrapError(stage, error) {
-  const message = `[Zotero-WebAI bootstrap] ${stage}: ${error?.message || error}`;
+  const message = `[Zotero WebAI bootstrap] ${stage}: ${error?.message || error}`;
   try {
     Zotero.logError(message);
     if (error?.stack) {
