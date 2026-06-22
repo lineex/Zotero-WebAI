@@ -166,6 +166,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
   const [historyVisible, setHistoryVisible] = useState(false);
   const [resultsCollapsed, setResultsCollapsed] = useState(true);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [zaiLoginMode, setZaiLoginMode] = useState(false);
   const [executionRecords, setExecutionRecords] = useState<
@@ -481,14 +482,27 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   };
 
   const enterZAILoginMode = () => {
+    setChatCollapsed(false);
     setZaiLoginMode(true);
     setStatus("Z.ai Login Mode gives the captcha the full sidebar height.");
     setIsError(false);
   };
 
   const exitZAILoginMode = () => {
+    setChatCollapsed(false);
     setZaiLoginMode(false);
     setStatus("Z.ai Chat Mode restored. Send inserts prompts into the web chat.");
+    setIsError(false);
+  };
+
+  const toggleChatFrame = () => {
+    const nextCollapsed = !chatCollapsed;
+    setChatCollapsed(nextCollapsed);
+    setStatus(
+      nextCollapsed
+        ? `${service.label} display hidden. Click Show Chat to restore it.`
+        : `${service.label} display restored.`,
+    );
     setIsError(false);
   };
 
@@ -586,6 +600,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         style={{
           ...styles.frameHost,
           ...(isZAILoginMode ? styles.loginFrameHost : {}),
+          ...(chatCollapsed ? styles.frameHostCollapsed : {}),
           background: theme.surfaceBackground,
           borderColor: theme.softBorder,
         }}
@@ -613,6 +628,20 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             </span>
           </div>
           <div style={styles.frameActions}>
+            <button
+              style={{
+                ...styles.miniButton,
+                background: chatCollapsed
+                  ? theme.badgeBackground
+                  : theme.surfaceBackground,
+                borderColor: chatCollapsed ? theme.badgeBorder : theme.buttonBorder,
+                color: chatCollapsed ? theme.badgeText : theme.buttonText,
+              }}
+              onClick={toggleChatFrame}
+              type="button"
+            >
+              {chatCollapsed ? "Show Chat" : "Hide Chat"}
+            </button>
             <button
               style={{
                 ...styles.miniButton,
@@ -690,6 +719,20 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           ))}
         </div>
         <div style={styles.frameActions}>
+          <button
+            style={{
+              ...styles.miniButton,
+              background: chatCollapsed
+                ? theme.badgeBackground
+                : theme.surfaceBackground,
+              borderColor: chatCollapsed ? theme.badgeBorder : theme.buttonBorder,
+              color: chatCollapsed ? theme.badgeText : theme.buttonText,
+            }}
+            onClick={toggleChatFrame}
+            type="button"
+          >
+            {chatCollapsed ? "Show Chat" : "Hide Chat"}
+          </button>
           <button
             style={{
               ...styles.miniButton,
@@ -2794,6 +2837,9 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: "520px",
     minWidth: 0,
     overflow: "hidden",
+  },
+  frameHostCollapsed: {
+    display: "none",
   },
   loginFrameHost: {
     flex: "1 1 auto",
