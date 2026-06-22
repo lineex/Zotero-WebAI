@@ -148,6 +148,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [isError, setIsError] = useState(false);
   const [message, setMessage] = useState("");
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
+  const [zaiLoginMode, setZaiLoginMode] = useState(false);
   const [executionRecords, setExecutionRecords] = useState<
     WebAIExecutionRecord[]
   >([]);
@@ -180,6 +181,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     ? filterSlashSkills(customSkills, slashQuery.query)
     : [];
   const showSlashMenu = Boolean(slashQuery && slashSuggestions.length > 0);
+  const isZAILoginMode = service.id === "zai" && zaiLoginMode;
 
   useEffect(() => {
     if (selectedSkillID && !customSkills.some((skill) => skill.id === selectedSkillID)) {
@@ -199,7 +201,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     activeMCPBridgeTokensRef.current.clear();
     handledMCPRequestsRef.current.clear();
     host.appendChild(frame);
-    setStatus(`Loaded ${service.label}. Sign in, then Send inserts prompts into the web chat.`);
+    setStatus(
+      service.id === "zai"
+        ? "Loaded Z.ai Web. Use Login Mode or Login Window if captcha needs more room."
+        : `Loaded ${service.label}. Sign in, then Send inserts prompts into the web chat.`,
+    );
     setIsError(false);
 
     return () => {
@@ -398,6 +404,31 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setIsError(false);
   };
 
+  const selectService = (candidate: WebAIService) => {
+    setService(candidate);
+    setZaiLoginMode(candidate.id === "zai");
+  };
+
+  const openServiceLoginWindow = () => {
+    openLoginWindow(hostWindow, service);
+    setStatus(
+      `Opened a larger ${service.label} login window. After sign-in, return here and reload if needed.`,
+    );
+    setIsError(false);
+  };
+
+  const enterZAILoginMode = () => {
+    setZaiLoginMode(true);
+    setStatus("Z.ai Login Mode gives the captcha the full sidebar height.");
+    setIsError(false);
+  };
+
+  const exitZAILoginMode = () => {
+    setZaiLoginMode(false);
+    setStatus("Z.ai Chat Mode restored. Send inserts prompts into the web chat.");
+    setIsError(false);
+  };
+
   const sendPrompt = async () => {
     const resolved = resolveSkillFromMessage(message, customSkills, selectedSkill);
     if (resolved.skill && resolved.skill.id !== selectedSkillID) {
@@ -479,11 +510,88 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         ref={frameHostRef}
         style={{
           ...styles.frameHost,
+          ...(isZAILoginMode ? styles.loginFrameHost : {}),
           background: theme.surfaceBackground,
           borderColor: theme.softBorder,
         }}
       />
 
+      {isZAILoginMode ? (
+        <div
+          style={{
+            ...styles.loginModeBar,
+            background: theme.surfaceBackground,
+            borderColor: theme.softBorder,
+          }}
+        >
+          <div style={styles.loginModeText}>
+            <span style={{ ...styles.loginModeTitle, color: theme.text }}>
+              Z.ai Login Mode
+            </span>
+            <span
+              style={{
+                ...styles.loginModeHint,
+                color: isError ? theme.errorText : theme.mutedText,
+              }}
+            >
+              {status}
+            </span>
+          </div>
+          <div style={styles.frameActions}>
+            <button
+              style={{
+                ...styles.miniButton,
+                ...styles.primaryMiniButton,
+                background: theme.badgeBackground,
+                borderColor: theme.badgeBorder,
+                color: theme.badgeText,
+              }}
+              onClick={openServiceLoginWindow}
+              type="button"
+            >
+              Login Window
+            </button>
+            <button
+              style={{
+                ...styles.miniButton,
+                background: theme.surfaceBackground,
+                borderColor: theme.buttonBorder,
+                color: theme.buttonText,
+              }}
+              onClick={() =>
+                void runAction(() => loadFrameElement(frameRef.current, service.url))
+              }
+              type="button"
+            >
+              Reload
+            </button>
+            <button
+              style={{
+                ...styles.miniButton,
+                background: theme.surfaceBackground,
+                borderColor: theme.buttonBorder,
+                color: theme.buttonText,
+              }}
+              onClick={exitZAILoginMode}
+              type="button"
+            >
+              Chat Mode
+            </button>
+            <button
+              style={{
+                ...styles.miniButton,
+                background: theme.surfaceBackground,
+                borderColor: theme.buttonBorder,
+                color: theme.buttonText,
+              }}
+              onClick={() => openExternalURL(service.url)}
+              type="button"
+            >
+              External
+            </button>
+          </div>
+        </div>
+      ) : (
       <div style={styles.frameToolbar}>
         <div style={styles.serviceBar}>
           {SERVICES.map((candidate) => (
@@ -499,7 +607,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                   candidate.id === service.id ? theme.badgeBorder : theme.buttonBorder,
                 color: candidate.id === service.id ? theme.badgeText : theme.buttonText,
               }}
-              onClick={() => setService(candidate)}
+              onClick={() => selectService(candidate)}
               type="button"
             >
               {candidate.label}
@@ -521,6 +629,35 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           >
             Reload
           </button>
+          {service.id === "zai" && (
+            <>
+              <button
+                style={{
+                  ...styles.miniButton,
+                  ...styles.primaryMiniButton,
+                  background: theme.badgeBackground,
+                  borderColor: theme.badgeBorder,
+                  color: theme.badgeText,
+                }}
+                onClick={openServiceLoginWindow}
+                type="button"
+              >
+                Login Window
+              </button>
+              <button
+                style={{
+                  ...styles.miniButton,
+                  background: theme.surfaceBackground,
+                  borderColor: theme.buttonBorder,
+                  color: theme.buttonText,
+                }}
+                onClick={enterZAILoginMode}
+                type="button"
+              >
+                Login Mode
+              </button>
+            </>
+          )}
           <button
             style={{
               ...styles.miniButton,
@@ -561,8 +698,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           </button>
         </div>
       </div>
+      )}
 
-      {executionRecords.length > 0 && (
+      {!isZAILoginMode && executionRecords.length > 0 && (
         <div
           style={{
             ...styles.executionPanel,
@@ -645,13 +783,14 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         </div>
       )}
 
-      <div
-        style={{
-          ...styles.composerPanel,
-          background: theme.surfaceBackground,
-          borderColor: theme.softBorder,
-        }}
-      >
+      {!isZAILoginMode && (
+        <div
+          style={{
+            ...styles.composerPanel,
+            background: theme.surfaceBackground,
+            borderColor: theme.softBorder,
+          }}
+        >
         {showSlashMenu && (
           <div
             style={{
@@ -733,7 +872,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             Send
           </button>
         </div>
-      </div>
+        </div>
+      )}
     </section>
   );
 };
@@ -821,6 +961,7 @@ function createWebFrame(doc: Document, url: string): Element {
     browser.setAttribute("remote", "true");
     browser.setAttribute("maychangeremoteness", "true");
     browser.setAttribute("disableglobalhistory", "true");
+    browser.setAttribute("allowfullscreen", "true");
     browser.setAttribute("flex", "1");
     loadFrameElement(browser, url);
     return browser;
@@ -834,13 +975,16 @@ function createWebFrame(doc: Document, url: string): Element {
       "allow-downloads",
       "allow-forms",
       "allow-modals",
+      "allow-pointer-lock",
       "allow-popups",
       "allow-popups-to-escape-sandbox",
       "allow-same-origin",
       "allow-scripts",
+      "allow-storage-access-by-user-activation",
       "allow-top-navigation-by-user-activation",
     ].join(" "),
   );
+  iframe.setAttribute("allow", "clipboard-read; clipboard-write; fullscreen");
   iframe.setAttribute("referrerpolicy", "no-referrer-when-downgrade");
   iframe.setAttribute("src", url);
   return iframe;
@@ -1447,6 +1591,47 @@ function openExternalURL(url: string): void {
     "@mozilla.org/uriloader/external-protocol-service;1"
   ].getService(Components.interfaces.nsIExternalProtocolService);
   externalProtocolService.loadURI(Services.io.newURI(url));
+}
+
+function openLoginWindow(hostWindow: Window, service: WebAIService): void {
+  const features =
+    "chrome,centerscreen,resizable,scrollbars,width=1120,height=840";
+  const name = `zotero-webai-${service.id}-login`;
+
+  try {
+    const opened = hostWindow.open(service.url, name, features);
+    if (opened) {
+      opened.focus?.();
+      return;
+    }
+  } catch (error) {
+    ztoolkit.log("window.open login window failed:", error);
+  }
+
+  try {
+    const componentClasses = Components.classes as Record<
+      string,
+      { getService: (interfaceType: unknown) => { openWindow?: (...args: unknown[]) => Window | null } }
+    >;
+    const windowWatcher = componentClasses[
+      "@mozilla.org/embedcomp/window-watcher;1"
+    ].getService(Components.interfaces.nsIWindowWatcher);
+    const opened = windowWatcher.openWindow?.(
+      hostWindow,
+      service.url,
+      name,
+      features,
+      null,
+    );
+    if (opened) {
+      opened.focus?.();
+      return;
+    }
+  } catch (error) {
+    ztoolkit.log("window watcher login window failed:", error);
+  }
+
+  openExternalURL(service.url);
 }
 
 async function extractMCPBridgeRequestsFromWebChat(
@@ -2082,6 +2267,42 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     overflow: "hidden",
   },
+  loginFrameHost: {
+    flex: "1 1 auto",
+    minHeight: 0,
+  },
+  loginModeBar: {
+    alignItems: "center",
+    border: "1px solid #e0e0e0",
+    borderRadius: "8px",
+    display: "flex",
+    flex: "0 0 auto",
+    flexWrap: "wrap",
+    gap: "8px",
+    justifyContent: "space-between",
+    minWidth: 0,
+    padding: "8px",
+  },
+  loginModeText: {
+    display: "flex",
+    flex: "1 1 220px",
+    flexDirection: "column",
+    gap: "2px",
+    minWidth: 0,
+  },
+  loginModeTitle: {
+    fontSize: typography.label,
+    fontWeight: 700,
+    lineHeight: 1.25,
+  },
+  loginModeHint: {
+    fontSize: typography.meta,
+    lineHeight: 1.35,
+    minWidth: 0,
+    overflow: "hidden",
+    overflowWrap: "anywhere",
+    textOverflow: "ellipsis",
+  },
   frameToolbar: {
     alignItems: "center",
     display: "flex",
@@ -2124,6 +2345,9 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: "26px",
     padding: "3px 9px",
     whiteSpace: "nowrap",
+  },
+  primaryMiniButton: {
+    fontWeight: 700,
   },
   executionPanel: {
     border: "1px solid #e0e0e0",
