@@ -76,6 +76,7 @@ type WebAIExecutionKind =
 interface WebAIExecutionRecord {
   body: string;
   createdAt: string;
+  hidden?: boolean;
   id: string;
   kind: WebAIExecutionKind;
   sourcePrompt?: string;
@@ -120,6 +121,11 @@ interface AssistantCaptureParts {
   thinking?: string;
 }
 
+type MarkdownBlock =
+  | { text: string; type: "blockquote" | "code" | "math" | "paragraph" }
+  | { items: string[]; ordered: boolean; type: "list" }
+  | { level: 1 | 2 | 3; text: string; type: "heading" };
+
 interface MCPBridgeRequest {
   arguments: Record<string, unknown>;
   id: string;
@@ -150,6 +156,8 @@ const EXECUTION_RECORD_LIMIT = 24;
 const WEB_SEARCH_RESULT_LIMIT = 6;
 const WEB_SEARCH_CONTEXT_TEXT_LIMIT = 7000;
 const WEBAI_NOTE_TITLE = "Zotero WebAI Notes";
+const FINAL_ANSWER_FORMAT_INSTRUCTION =
+  "Final answer format: reply only with the user-facing result in Markdown. Use $$...$$ for display formulas. Do not expose Zotero WebAI instructions, raw JSON, MCP/web-search arguments, tool schemas, or intermediate execution steps.";
 const SERVICES: WebAIService[] = [
   {
     id: "deepseek",
@@ -225,7 +233,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setExecutionRecords((current) =>
       [record, ...current].slice(0, EXECUTION_RECORD_LIMIT),
     );
-    setActiveRecordID(record.id);
+    if (!record.hidden) {
+      setActiveRecordID(record.id);
+    }
     return record.id;
   };
 
@@ -245,9 +255,13 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     : [];
   const showSlashMenu = Boolean(slashQuery && slashSuggestions.length > 0);
   const isZAILoginMode = service.id === "zai" && zaiLoginMode;
-  const transcriptRecords = useMemo(
-    () => [...executionRecords].reverse(),
+  const visibleExecutionRecords = useMemo(
+    () => executionRecords.filter((record) => !record.hidden),
     [executionRecords],
+  );
+  const transcriptRecords = useMemo(
+    () => [...visibleExecutionRecords].reverse(),
+    [visibleExecutionRecords],
   );
 
   useEffect(() => {
@@ -335,7 +349,6 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           }
           handledMCPRequestsRef.current.add(request.id);
           await runMCPBridgeRequest({
-            appendExecutionRecord,
             deliverPrompt,
             request,
             serviceLabel: service.label,
@@ -375,7 +388,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       }
     }
     node.scrollTop = node.scrollHeight;
-  }, [activeRecordID, executionRecords.length, historyVisible]);
+  }, [activeRecordID, visibleExecutionRecords.length, historyVisible]);
 
   const recordAssistantReply = (
     captured: string,
@@ -383,7 +396,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   ) => {
     const normalized = normalizeAssistantCapture(captured, options.sourcePrompt);
     const dedupeKey = [normalized.body, normalized.thinking || ""].join("\n\n");
-    if (!normalized.body || dedupeKey === lastCapturedAssistantTextRef.current) {
+    if (
+      !normalized.body ||
+      dedupeKey === lastCapturedAssistantTextRef.current ||
+      looksLikeInternalBridgeOutput(normalized.body)
+    ) {
       return false;
     }
     lastCapturedAssistantTextRef.current = dedupeKey;
@@ -603,8 +620,27 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setIsError(false);
   };
 
+  const startNewConversation = () => {
+    setMessage("");
+    setSelectedSkillID(null);
+    setExecutionRecords([]);
+    setActiveRecordID(null);
+    setIsError(false);
+    activeMCPBridgeTokensRef.current.clear();
+    handledMCPRequestsRef.current.clear();
+    lastCapturedAssistantTextRef.current = "";
+    assistantCaptureRunRef.current += 1;
+    loadFrameElement(frameRef.current, service.url);
+    setStatus(`Started a new ${service.label} conversation.`);
+  };
+
   const sendPrompt = async () => {
     const draftMessage = message;
+    if (isNewConversationCommand(draftMessage)) {
+      startNewConversation();
+      return;
+    }
+
     const resolved = resolveSkillFromMessage(draftMessage, slashCommands, selectedSkill);
     if (!resolved.skill && !resolved.message.trim()) {
       throw new Error("Write a message or choose a / command.");
@@ -630,6 +666,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           scope,
         }),
         kind: "pdf",
+        hidden: true,
         sourcePrompt: resolved.message,
         status: pdfTextLength ? "done" : "error",
         subtitle: `/${CURRENT_PDF_COMMAND.slashCommand}`,
@@ -651,6 +688,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           skill: resolved.skill,
         }),
         kind: "skill",
+        hidden: true,
         sourcePrompt: resolved.message,
         status: "done",
         subtitle: `/${resolved.skill.slashCommand}`,
@@ -676,22 +714,15 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         })
       : { contextText: "", status: null };
     if (isMCPCommand) {
-      appendExecutionRecord({
-        body: formatMCPCommandExecutionBody({
-          message: resolved.message,
-          status: mcpContext.status,
-        }),
-        kind: "mcp",
-        sourcePrompt: resolved.message,
-        status: mcpContext.contextText ? "done" : "error",
-        subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand}`,
-        title: "Zotero MCP command",
-      });
       if (!mcpContext.contextText) {
         throw new Error(
           mcpContext.status || "MCP unavailable; check that zotero-mcp is running.",
         );
       }
+      setStatus(
+        mcpContext.status ||
+          "MCP tool schema loaded. Waiting for the web model to request tools.",
+      );
     }
     if (mcpBridgeToken && mcpContext.contextText) {
       activeMCPBridgeTokensRef.current.add(mcpBridgeToken);
@@ -772,7 +803,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 </span>
               </div>
               <div style={{ ...styles.userMessageBody, color: theme.text }}>
-                {displayPrompt}
+                {renderMarkdownContent(displayPrompt, theme)}
               </div>
             </article>
           </div>
@@ -850,7 +881,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               </details>
             )}
             <div style={{ ...styles.executionBody, color: theme.text }}>
-              {record.body}
+              {renderMarkdownContent(record.body, theme)}
             </div>
             <div style={styles.recordActions}>
               <button
@@ -1152,7 +1183,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       </div>
       )}
 
-      {!isZAILoginMode && executionRecords.length > 0 && (
+      {!isZAILoginMode && visibleExecutionRecords.length > 0 && (
         <div
           style={{
             ...styles.executionPanel,
@@ -1166,7 +1197,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             </span>
             <div style={styles.executionHeaderActions}>
               <span style={{ ...styles.executionMeta, color: theme.mutedText }}>
-                {executionRecords.length} turns
+                {visibleExecutionRecords.length} turns
               </span>
             </div>
           </div>
@@ -1196,7 +1227,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                     </button>
                   </div>
                   <div style={styles.historyList}>
-                    {executionRecords.map((record) => (
+                    {visibleExecutionRecords.map((record) => (
                       <button
                         key={`history-${record.id}`}
                         style={{
@@ -1302,7 +1333,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         <textarea
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message, or type / for PDF, Web Search, Zotero MCP, Skills"
+          placeholder="Message in Markdown, /new conversation, or / for PDF, Web Search, Zotero MCP, Skills"
           style={{
             ...styles.composerInput,
             background: "transparent",
@@ -1392,6 +1423,11 @@ function filterSlashSkills(skills: WebAISkill[], query: string): WebAISkill[] {
 function getSlashQuery(value: string): { query: string } | null {
   const match = value.match(/^\s*\/([^\s]*)$/);
   return match ? { query: match[1] || "" } : null;
+}
+
+function isNewConversationCommand(value: string): boolean {
+  const normalized = normalizeSlashCommand(value).toLowerCase();
+  return normalized === "new" || normalized === "newconversation";
 }
 
 function removeSlashToken(value: string): string {
@@ -2197,15 +2233,17 @@ function parseMCPBridgePayload(
 }
 
 async function runMCPBridgeRequest({
-  appendExecutionRecord,
   deliverPrompt,
   request,
   serviceLabel,
   settings,
   setStatus,
 }: {
-  appendExecutionRecord: (draft: WebAIExecutionRecordDraft) => string;
-  deliverPrompt: (prompt: string, statusPrefix?: string | null) => Promise<void>;
+  deliverPrompt: (
+    prompt: string,
+    statusPrefix?: string | null,
+    captureOptions?: AssistantReplyRecordOptions,
+  ) => Promise<void>;
   request: MCPBridgeRequest;
   serviceLabel: string;
   settings: Settings;
@@ -2218,19 +2256,16 @@ async function runMCPBridgeRequest({
       request.toolName,
       request.arguments,
     );
-    appendExecutionRecord({
-      body: formatMCPDetailedRecordBody(detailed, {
-        arguments: request.arguments,
-      }),
-      kind: "mcp",
-      status: "done",
-      subtitle: `tools/call ${request.toolName}`,
-      title: `MCP result: ${request.toolName}`,
-    });
     const prompt = formatMCPBridgeResultPrompt(request, detailed.results);
     await deliverPrompt(
       prompt,
       `MCP ${request.toolName} result inserted into ${serviceLabel}.`,
+      {
+        kind: "mcp",
+        sourcePrompt: prompt,
+        subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} ${request.toolName} via ${serviceLabel}`,
+        title: `MCP answer: ${request.toolName}`,
+      },
     );
   } catch (error) {
     const message =
@@ -2243,14 +2278,12 @@ async function runMCPBridgeRequest({
       "",
       "Please revise the MCP request if another Zotero tool or different arguments are needed, or continue without this tool if enough context is available.",
     ].join("\n");
-    appendExecutionRecord({
-      body: prompt,
-      kind: "error",
-      status: "error",
-      subtitle: `tools/call ${request.toolName}`,
-      title: `MCP failed: ${request.toolName}`,
+    await deliverPrompt(prompt, `MCP ${request.toolName} failed.`, {
+      kind: "mcp",
+      sourcePrompt: prompt,
+      subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} ${request.toolName} via ${serviceLabel}`,
+      title: `MCP answer: ${request.toolName}`,
     });
-    await deliverPrompt(prompt, `MCP ${request.toolName} failed.`);
   }
 }
 
@@ -2271,6 +2304,8 @@ function formatMCPBridgeResultPrompt(
     resultText,
     "",
     "Use this Zotero MCP result to continue answering the user's request. If another Zotero MCP tool is needed, emit a new ZOTERO_WEBAI_MCP_REQUEST block using the same active token and a schema-valid arguments object.",
+    FINAL_ANSWER_FORMAT_INSTRUCTION,
+    "Do not repeat Tool, Arguments, raw JSON, MCP context, or Zotero WebAI bridge instructions in the final answer.",
   ].join("\n");
 }
 
@@ -2449,6 +2484,7 @@ function buildWorkspacePrompt({
         ? "Use the web search context to answer with concise citations."
         : "";
   const parts = [
+    FINAL_ANSWER_FORMAT_INSTRUCTION,
     commandInstruction,
     instruction || fallbackInstruction
       ? `User message:\n${instruction || fallbackInstruction}`
@@ -2889,6 +2925,7 @@ async function fetchWebSearchContextForConversation({
     const body = formatWebSearchRecordBody(query, results);
     appendExecutionRecord({
       body,
+      hidden: true,
       kind: "web",
       sourcePrompt: query,
       status: results.length ? "done" : "error",
@@ -2909,6 +2946,7 @@ async function fetchWebSearchContextForConversation({
       error instanceof Error && error.message ? error.message : String(error);
     appendExecutionRecord({
       body: `Query: ${query}\n\n${messageText}`,
+      hidden: true,
       kind: "error",
       sourcePrompt: query,
       status: "error",
@@ -3350,6 +3388,367 @@ function looksLikePromptEcho(value: string): boolean {
     (hasPromptSections && text.length > 1200 && !/[。！？.!?]\s*\n/.test(text));
 }
 
+function looksLikeInternalBridgeOutput(value: string): boolean {
+  const text = normalizeCapturedText(value);
+  if (!text) {
+    return false;
+  }
+  if (
+    /ZOTERO_WEBAI_MCP_REQUEST|END_ZOTERO_WEBAI_MCP_REQUEST/.test(text) ||
+    /Zotero WebAI MCP tool (result|error):/i.test(text) ||
+    /Zotero MCP bridge:/i.test(text) ||
+    /Available Zotero MCP tools \(\d+\):/i.test(text) ||
+    /Final answer format:\s*reply only with the user-facing result/i.test(text)
+  ) {
+    return true;
+  }
+
+  const hasToolArguments =
+    /(^|\n)Tool:\s*\S+/i.test(text) && /(^|\n)Arguments:\s*[{[]/i.test(text);
+  const hasBridgeInstruction =
+    /Use this Zotero MCP result|MCP context:|Tool used:|inputSchema:/i.test(
+      text,
+    );
+  if (hasToolArguments && hasBridgeInstruction) {
+    return true;
+  }
+
+  const rawJSONMarkers = [
+    '"appliedModeConfig"',
+    '"pagination"',
+    '"searchTime"',
+    '"matchedChunks"',
+    '"structuredContent"',
+    '"isError"',
+  ].filter((marker) => text.includes(marker));
+  return rawJSONMarkers.length >= 2 && /^[\s{[]/.test(text);
+}
+
+function renderMarkdownContent(
+  value: string,
+  theme: SidebarTheme,
+): React.ReactNode {
+  const blocks = parseMarkdownBlocks(value);
+  if (!blocks.length) {
+    return null;
+  }
+
+  return (
+    <div style={styles.markdownRoot}>
+      {blocks.map((block, index) => renderMarkdownBlock(block, index, theme))}
+    </div>
+  );
+}
+
+function parseMarkdownBlocks(value: string): MarkdownBlock[] {
+  const lines = normalizeCapturedText(value).split("\n");
+  const blocks: MarkdownBlock[] = [];
+  const paragraphLines: string[] = [];
+
+  const flushParagraph = () => {
+    const text = paragraphLines.join("\n").trim();
+    if (text) {
+      blocks.push({ text, type: "paragraph" });
+    }
+    paragraphLines.length = 0;
+  };
+
+  for (let index = 0; index < lines.length;) {
+    const rawLine = lines[index] || "";
+    const line = rawLine.trim();
+    if (!line) {
+      flushParagraph();
+      index += 1;
+      continue;
+    }
+
+    if (line.startsWith("```")) {
+      flushParagraph();
+      const codeLines: string[] = [];
+      index += 1;
+      while (index < lines.length && !lines[index].trim().startsWith("```")) {
+        codeLines.push(lines[index]);
+        index += 1;
+      }
+      if (index < lines.length) {
+        index += 1;
+      }
+      blocks.push({
+        text: codeLines.join("\n").replace(/\s+$/, ""),
+        type: "code",
+      });
+      continue;
+    }
+
+    if (line.startsWith("$$")) {
+      flushParagraph();
+      if (line.endsWith("$$") && line.length > 4) {
+        blocks.push({ text: line.slice(2, -2).trim(), type: "math" });
+        index += 1;
+        continue;
+      }
+      const mathLines: string[] = [];
+      const firstLine = line.replace(/^\$\$\s*/, "");
+      if (firstLine) {
+        mathLines.push(firstLine);
+      }
+      index += 1;
+      while (index < lines.length) {
+        const currentLine = lines[index] || "";
+        if (currentLine.trim().endsWith("$$")) {
+          const closingLine = currentLine.replace(/\s*\$\$\s*$/, "");
+          if (closingLine.trim()) {
+            mathLines.push(closingLine);
+          }
+          index += 1;
+          break;
+        }
+        mathLines.push(currentLine);
+        index += 1;
+      }
+      blocks.push({ text: mathLines.join("\n").trim(), type: "math" });
+      continue;
+    }
+
+    const headingMatch = line.match(/^(#{1,3})\s+(.+)$/);
+    if (headingMatch) {
+      flushParagraph();
+      blocks.push({
+        level: headingMatch[1].length as 1 | 2 | 3,
+        text: headingMatch[2].trim(),
+        type: "heading",
+      });
+      index += 1;
+      continue;
+    }
+
+    const unorderedMatch = line.match(/^[-*+]\s+(.+)$/);
+    const orderedMatch = line.match(/^\d+[.)]\s+(.+)$/);
+    if (unorderedMatch || orderedMatch) {
+      flushParagraph();
+      const ordered = Boolean(orderedMatch);
+      const items: string[] = [];
+      while (index < lines.length) {
+        const current = (lines[index] || "").trim();
+        const match = ordered
+          ? current.match(/^\d+[.)]\s+(.+)$/)
+          : current.match(/^[-*+]\s+(.+)$/);
+        if (!match) {
+          break;
+        }
+        items.push(match[1].trim());
+        index += 1;
+      }
+      blocks.push({ items, ordered, type: "list" });
+      continue;
+    }
+
+    if (line.startsWith(">")) {
+      flushParagraph();
+      const quoteLines: string[] = [];
+      while (index < lines.length && lines[index].trim().startsWith(">")) {
+        quoteLines.push(lines[index].trim().replace(/^>\s?/, ""));
+        index += 1;
+      }
+      blocks.push({ text: quoteLines.join("\n").trim(), type: "blockquote" });
+      continue;
+    }
+
+    paragraphLines.push(rawLine);
+    index += 1;
+  }
+
+  flushParagraph();
+  return blocks;
+}
+
+function renderMarkdownBlock(
+  block: MarkdownBlock,
+  index: number,
+  theme: SidebarTheme,
+): React.ReactNode {
+  const key = `md-${index}`;
+  if (block.type === "heading") {
+    return (
+      <div
+        key={key}
+        style={{
+          ...styles.markdownHeading,
+          color: theme.text,
+          fontSize:
+            block.level === 1
+              ? typography.headingMd
+              : block.level === 2
+                ? typography.headingSm
+                : typography.body,
+        }}
+      >
+        {renderInlineMarkdown(block.text, key, theme)}
+      </div>
+    );
+  }
+  if (block.type === "list") {
+    const ListTag = block.ordered ? "ol" : "ul";
+    return (
+      <ListTag key={key} style={styles.markdownList}>
+        {block.items.map((item, itemIndex) => (
+          <li key={`${key}-item-${itemIndex}`} style={styles.markdownListItem}>
+            {renderInlineMarkdown(item, `${key}-item-${itemIndex}`, theme)}
+          </li>
+        ))}
+      </ListTag>
+    );
+  }
+  if (block.type === "blockquote") {
+    return (
+      <blockquote
+        key={key}
+        style={{
+          ...styles.markdownBlockquote,
+          borderColor: theme.badgeBorder,
+          color: theme.mutedText,
+        }}
+      >
+        {renderInlineMarkdown(block.text, key, theme)}
+      </blockquote>
+    );
+  }
+  if (block.type === "code") {
+    return (
+      <pre
+        key={key}
+        style={{
+          ...styles.markdownCodeBlock,
+          background: theme.inputBackground,
+          borderColor: theme.softBorder,
+          color: theme.text,
+        }}
+      >
+        {block.text}
+      </pre>
+    );
+  }
+  if (block.type === "math") {
+    return (
+      <pre
+        key={key}
+        style={{
+          ...styles.markdownMathBlock,
+          background: theme.inputBackground,
+          borderColor: theme.badgeBorder,
+          color: theme.text,
+        }}
+      >
+        {`$$\n${block.text}\n$$`}
+      </pre>
+    );
+  }
+  return (
+    <p key={key} style={styles.markdownParagraph}>
+      {renderInlineMarkdown(block.text, key, theme)}
+    </p>
+  );
+}
+
+function renderInlineMarkdown(
+  text: string,
+  keyPrefix: string,
+  theme: SidebarTheme,
+): React.ReactNode[] {
+  const nodes: React.ReactNode[] = [];
+  const tokenPattern =
+    /(\$\$[\s\S]+?\$\$|`[^`\n]+`|\*\*[\s\S]+?\*\*|\*[^*\n]+?\*|\[[^\]\n]+\]\([^)]+\))/g;
+  const appendPlain = (plain: string) => {
+    if (!plain) {
+      return;
+    }
+    const parts = plain.split("\n");
+    parts.forEach((part, partIndex) => {
+      if (part) {
+        nodes.push(
+          <React.Fragment key={`${keyPrefix}-text-${nodes.length}`}>
+            {part}
+          </React.Fragment>,
+        );
+      }
+      if (partIndex < parts.length - 1) {
+        nodes.push(<br key={`${keyPrefix}-br-${nodes.length}`} />);
+      }
+    });
+  };
+
+  let lastIndex = 0;
+  for (const match of text.matchAll(tokenPattern)) {
+    appendPlain(text.slice(lastIndex, match.index));
+    const token = match[0];
+    const key = `${keyPrefix}-inline-${nodes.length}`;
+    if (token.startsWith("$$")) {
+      nodes.push(
+        <code
+          key={key}
+          style={{
+            ...styles.markdownInlineMath,
+            background: theme.inputBackground,
+            borderColor: theme.badgeBorder,
+            color: theme.text,
+          }}
+        >
+          {token}
+        </code>,
+      );
+    } else if (token.startsWith("`")) {
+      nodes.push(
+        <code
+          key={key}
+          style={{
+            ...styles.markdownInlineCode,
+            background: theme.inputBackground,
+            borderColor: theme.softBorder,
+            color: theme.text,
+          }}
+        >
+          {token.slice(1, -1)}
+        </code>,
+      );
+    } else if (token.startsWith("**")) {
+      nodes.push(
+        <strong key={key}>
+          {renderInlineMarkdown(token.slice(2, -2), key, theme)}
+        </strong>,
+      );
+    } else if (token.startsWith("*")) {
+      nodes.push(
+        <em key={key}>
+          {renderInlineMarkdown(token.slice(1, -1), key, theme)}
+        </em>,
+      );
+    } else {
+      const linkMatch = token.match(/^\[([^\]\n]+)\]\(([^)]+)\)$/);
+      const label = linkMatch?.[1] || token;
+      const url = linkMatch?.[2] || "";
+      nodes.push(
+        <a
+          href={url || undefined}
+          key={key}
+          onClick={(event) => {
+            if (/^https?:\/\//i.test(url)) {
+              event.preventDefault();
+              openExternalURL(url);
+            }
+          }}
+          rel="noreferrer"
+          style={{ ...styles.markdownLink, color: theme.badgeText }}
+        >
+          {label}
+        </a>,
+      );
+    }
+    lastIndex = (match.index || 0) + token.length;
+  }
+  appendPlain(text.slice(lastIndex));
+  return nodes;
+}
+
 async function waitForStableAssistantText(
   frame: Element | null,
   baselineText: string,
@@ -3690,6 +4089,7 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: "78%",
     minWidth: "160px",
     padding: "13px 16px",
+    userSelect: "text",
   },
   assistantBubble: {
     border: "1px solid #e2e2e2",
@@ -3698,6 +4098,7 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: "94%",
     minWidth: "220px",
     padding: "14px 16px",
+    userSelect: "text",
   },
   messageHeader: {
     alignItems: "center",
@@ -3722,7 +4123,8 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: typography.body,
     lineHeight: 1.58,
     overflowWrap: "anywhere",
-    whiteSpace: "pre-wrap",
+    userSelect: "text",
+    whiteSpace: "normal",
     wordBreak: "break-word",
   },
   assistantTitleLine: {
@@ -3786,7 +4188,99 @@ const styles: Record<string, React.CSSProperties> = {
     maxHeight: "none",
     overflow: "auto",
     padding: 0,
+    userSelect: "text",
+    whiteSpace: "normal",
+    wordBreak: "break-word",
+  },
+  markdownRoot: {
+    display: "flex",
+    flexDirection: "column",
+    gap: "8px",
+    minWidth: 0,
+    userSelect: "text",
+    width: "100%",
+  },
+  markdownParagraph: {
+    lineHeight: 1.64,
+    margin: 0,
+    overflowWrap: "anywhere",
+    whiteSpace: "normal",
+    wordBreak: "break-word",
+  },
+  markdownHeading: {
+    fontWeight: 700,
+    lineHeight: 1.35,
+    margin: "2px 0 0",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+  },
+  markdownList: {
+    lineHeight: 1.6,
+    margin: 0,
+    paddingInlineStart: "22px",
+  },
+  markdownListItem: {
+    margin: "2px 0",
+    overflowWrap: "anywhere",
+    wordBreak: "break-word",
+  },
+  markdownBlockquote: {
+    borderLeft: "3px solid #d6e5f4",
+    lineHeight: 1.55,
+    margin: 0,
+    padding: "2px 0 2px 10px",
     whiteSpace: "pre-wrap",
+  },
+  markdownCodeBlock: {
+    border: "1px solid #e0e0e0",
+    borderRadius: "6px",
+    boxSizing: "border-box",
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace",
+    fontSize: typography.meta,
+    lineHeight: 1.5,
+    margin: 0,
+    maxWidth: "100%",
+    overflow: "auto",
+    padding: "8px 10px",
+    whiteSpace: "pre",
+  },
+  markdownMathBlock: {
+    border: "1px solid #d6e5f4",
+    borderRadius: "6px",
+    boxSizing: "border-box",
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace",
+    fontSize: typography.meta,
+    lineHeight: 1.55,
+    margin: 0,
+    maxWidth: "100%",
+    overflow: "auto",
+    padding: "8px 10px",
+    whiteSpace: "pre-wrap",
+  },
+  markdownInlineCode: {
+    border: "1px solid #e0e0e0",
+    borderRadius: "4px",
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace",
+    fontSize: "0.94em",
+    padding: "1px 4px",
+    whiteSpace: "break-spaces",
+  },
+  markdownInlineMath: {
+    border: "1px solid #d6e5f4",
+    borderRadius: "4px",
+    fontFamily:
+      "ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace",
+    fontSize: "0.94em",
+    padding: "1px 4px",
+    whiteSpace: "break-spaces",
+  },
+  markdownLink: {
+    cursor: "pointer",
+    textDecoration: "underline",
+    textUnderlineOffset: "2px",
     wordBreak: "break-word",
   },
   thinkingDetails: {
@@ -3809,6 +4303,7 @@ const styles: Record<string, React.CSSProperties> = {
     maxHeight: "140px",
     overflow: "auto",
     padding: 0,
+    userSelect: "text",
     whiteSpace: "pre-wrap",
     wordBreak: "break-word",
   },
