@@ -13,7 +13,7 @@ import {
   type Settings,
 } from "../../services/settingsManager";
 import type { ScopeContext } from "../../types/scope";
-import { getSidebarTheme } from "../theme";
+import { getSidebarTheme, type SidebarTheme } from "../theme";
 import { typography } from "../typography";
 
 type WebAIServiceId = "deepseek" | "zai";
@@ -208,8 +208,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [executionRecords, setExecutionRecords] = useState<
     WebAIExecutionRecord[]
   >([]);
+  const [activeRecordID, setActiveRecordID] = useState<string | null>(null);
   const frameHostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<Element | null>(null);
+  const transcriptRef = useRef<HTMLDivElement>(null);
   const activeMCPBridgeTokensRef = useRef<Set<string>>(new Set());
   const assistantCaptureRunRef = useRef(0);
   const handledMCPRequestsRef = useRef<Set<string>>(new Set());
@@ -223,6 +225,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setExecutionRecords((current) =>
       [record, ...current].slice(0, EXECUTION_RECORD_LIMIT),
     );
+    setActiveRecordID(record.id);
     return record.id;
   };
 
@@ -242,6 +245,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     : [];
   const showSlashMenu = Boolean(slashQuery && slashSuggestions.length > 0);
   const isZAILoginMode = service.id === "zai" && zaiLoginMode;
+  const transcriptRecords = useMemo(
+    () => [...executionRecords].reverse(),
+    [executionRecords],
+  );
 
   useEffect(() => {
     if (selectedSkillID && !slashCommands.some((skill) => skill.id === selectedSkillID)) {
@@ -352,6 +359,23 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       }
     };
   }, [service.label, settings]);
+
+  useEffect(() => {
+    const node = transcriptRef.current;
+    if (!node) {
+      return;
+    }
+    if (activeRecordID) {
+      const target = node.querySelector<HTMLElement>(
+        `[data-record-id="${activeRecordID}"]`,
+      );
+      if (target) {
+        target.scrollIntoView({ block: "end" });
+        return;
+      }
+    }
+    node.scrollTop = node.scrollHeight;
+  }, [activeRecordID, executionRecords.length, historyVisible]);
 
   const recordAssistantReply = (
     captured: string,
@@ -689,6 +713,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   };
 
   const handleKeyDown = (event: React.KeyboardEvent<HTMLTextAreaElement>) => {
+    const isComposing =
+      "isComposing" in event.nativeEvent && event.nativeEvent.isComposing;
+
     if (event.key === "Enter" && (event.ctrlKey || event.metaKey)) {
       event.preventDefault();
       void runAction(sendPrompt);
@@ -698,7 +725,172 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     if (event.key === "Enter" && showSlashMenu && slashSuggestions[0]) {
       event.preventDefault();
       chooseSkill(slashSuggestions[0]);
+      return;
     }
+
+    if (
+      event.key === "Enter" &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey &&
+      !event.metaKey &&
+      !isComposing
+    ) {
+      event.preventDefault();
+      void runAction(sendPrompt);
+    }
+  };
+
+  const renderTranscriptRecord = (record: WebAIExecutionRecord) => {
+    const displayPrompt = formatRecordSourceForChat(record);
+    const isActive = activeRecordID === record.id;
+
+    return (
+      <section
+        data-record-id={record.id}
+        key={record.id}
+        style={{
+          ...styles.chatTurn,
+          outline: isActive ? `1px solid ${theme.badgeBorder}` : "none",
+        }}
+      >
+        {displayPrompt && (
+          <div style={{ ...styles.messageRow, ...styles.userMessageRow }}>
+            <article
+              style={{
+                ...styles.userBubble,
+                background: theme.userMessageBackground,
+                borderColor: theme.userMessageBorder,
+              }}
+            >
+              <div style={styles.messageHeader}>
+                <span style={{ ...styles.messageAuthor, color: theme.text }}>
+                  User
+                </span>
+                <span style={{ ...styles.messageTimestamp, color: theme.mutedText }}>
+                  {formatRecordTimestamp(record.createdAt)}
+                </span>
+              </div>
+              <div style={{ ...styles.userMessageBody, color: theme.text }}>
+                {displayPrompt}
+              </div>
+            </article>
+          </div>
+        )}
+
+        <div style={{ ...styles.messageRow, ...styles.assistantMessageRow }}>
+          <article
+            style={{
+              ...styles.assistantBubble,
+              background: getRecordBubbleBackground(record.kind, theme),
+              borderColor:
+                record.status === "error"
+                  ? theme.errorText
+                  : getRecordBubbleBorder(record.kind, theme),
+            }}
+          >
+            <div style={styles.messageHeader}>
+              <span style={styles.assistantTitleLine}>
+                <span
+                  style={{
+                    ...styles.executionKind,
+                    background: getRecordBadgeBackground(record.kind, theme),
+                    borderColor: getRecordBadgeBorder(record.kind, theme),
+                    color:
+                      record.status === "error"
+                        ? theme.errorText
+                        : getRecordBadgeText(record.kind, theme),
+                  }}
+                >
+                  {getRecordKindLabel(record.kind)}
+                </span>
+                <span
+                  style={{
+                    ...styles.executionItemTitle,
+                    color: theme.text,
+                  }}
+                >
+                  {record.title}
+                </span>
+              </span>
+              {!displayPrompt && (
+                <span style={{ ...styles.messageTimestamp, color: theme.mutedText }}>
+                  {formatRecordTimestamp(record.createdAt)}
+                </span>
+              )}
+            </div>
+            {record.subtitle && (
+              <div
+                style={{
+                  ...styles.executionItemSubtitle,
+                  color: theme.mutedText,
+                }}
+              >
+                {record.subtitle}
+              </div>
+            )}
+            {record.thinking && (
+              <details style={styles.thinkingDetails}>
+                <summary
+                  style={{
+                    ...styles.thinkingSummary,
+                    color: theme.mutedText,
+                  }}
+                >
+                  Thinking
+                </summary>
+                <pre
+                  style={{
+                    ...styles.thinkingBody,
+                    color: theme.mutedText,
+                  }}
+                >
+                  {record.thinking}
+                </pre>
+              </details>
+            )}
+            <div style={{ ...styles.executionBody, color: theme.text }}>
+              {record.body}
+            </div>
+            <div style={styles.recordActions}>
+              <button
+                style={{
+                  ...styles.inlineActionButton,
+                  borderColor: theme.buttonBorder,
+                  color: theme.buttonText,
+                }}
+                onClick={() => copyRecord(record)}
+                type="button"
+              >
+                复制
+              </button>
+              <button
+                style={{
+                  ...styles.inlineActionButton,
+                  borderColor: theme.buttonBorder,
+                  color: theme.buttonText,
+                }}
+                onClick={() => void runAction(() => regenerateRecord(record))}
+                type="button"
+              >
+                重新生成
+              </button>
+              <button
+                style={{
+                  ...styles.inlineActionButton,
+                  borderColor: theme.buttonBorder,
+                  color: theme.buttonText,
+                }}
+                onClick={() => void runAction(() => appendRecordToNote(record))}
+                type="button"
+              >
+                追加笔记
+              </button>
+            </div>
+          </article>
+        </div>
+      </section>
+    );
   };
 
   return (
@@ -970,11 +1162,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         >
           <div style={styles.executionHeader}>
             <span style={{ ...styles.executionTitle, color: theme.text }}>
-              Results
+              Conversation
             </span>
             <div style={styles.executionHeaderActions}>
               <span style={{ ...styles.executionMeta, color: theme.mutedText }}>
-                {executionRecords.length} items
+                {executionRecords.length} turns
               </span>
             </div>
           </div>
@@ -983,6 +1175,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 <aside
                   style={{
                     ...styles.historyPanel,
+                    background: theme.panelBackground,
                     borderColor: theme.softBorder,
                   }}
                 >
@@ -1008,10 +1201,17 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                         key={`history-${record.id}`}
                         style={{
                           ...styles.historyItem,
-                          borderColor: theme.softBorder,
+                          background:
+                            activeRecordID === record.id
+                              ? theme.badgeBackground
+                              : theme.surfaceBackground,
+                          borderColor:
+                            activeRecordID === record.id
+                              ? theme.badgeBorder
+                              : theme.softBorder,
                           color: theme.text,
                         }}
-                        onClick={() => copyRecord(record)}
+                        onClick={() => setActiveRecordID(record.id)}
                         type="button"
                       >
                         <span style={styles.historyItemTitle}>{record.title}</span>
@@ -1021,129 +1221,15 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                             color: theme.mutedText,
                           }}
                         >
-                          {formatRecordTimestamp(record.createdAt)}
+                          {getRecordKindLabel(record.kind)} - {formatRecordTimestamp(record.createdAt)}
                         </span>
                       </button>
                     ))}
                   </div>
                 </aside>
               )}
-              <div style={styles.executionList}>
-                {executionRecords.map((record) => (
-                  <article
-                    key={record.id}
-                    style={{
-                      ...styles.executionItem,
-                      borderColor:
-                        record.status === "error"
-                          ? theme.errorText
-                          : theme.softBorder,
-                    }}
-                  >
-                    <div style={styles.executionSummary}>
-                      <span
-                        style={{
-                          ...styles.executionKind,
-                          background:
-                            record.kind === "mcp"
-                              ? theme.accentBackground
-                              : record.kind === "pdf"
-                                ? theme.badgeBackground
-                                : record.kind === "skill"
-                                  ? theme.badgeBackground
-                                  : record.kind === "web"
-                                    ? theme.noticeBackground
-                                    : theme.surfaceBackground,
-                          borderColor: theme.buttonBorder,
-                          color:
-                            record.status === "error"
-                              ? theme.errorText
-                              : theme.text,
-                        }}
-                      >
-                        {record.kind}
-                      </span>
-                      <span style={styles.executionSummaryText}>
-                        <span
-                          style={{
-                            ...styles.executionItemTitle,
-                            color: theme.text,
-                          }}
-                        >
-                          {record.title}
-                        </span>
-                        {record.subtitle && (
-                          <span
-                            style={{
-                              ...styles.executionItemSubtitle,
-                              color: theme.mutedText,
-                            }}
-                          >
-                            {record.subtitle}
-                          </span>
-                        )}
-                      </span>
-                    </div>
-                    {record.thinking && (
-                      <details style={styles.thinkingDetails}>
-                        <summary
-                          style={{
-                            ...styles.thinkingSummary,
-                            color: theme.mutedText,
-                          }}
-                        >
-                          思考链 / Thinking
-                        </summary>
-                        <pre
-                          style={{
-                            ...styles.thinkingBody,
-                            color: theme.mutedText,
-                          }}
-                        >
-                          {record.thinking}
-                        </pre>
-                      </details>
-                    )}
-                    <pre style={{ ...styles.executionBody, color: theme.text }}>
-                      {record.body}
-                    </pre>
-                    <div style={styles.recordActions}>
-                      <button
-                        style={{
-                          ...styles.inlineActionButton,
-                          borderColor: theme.buttonBorder,
-                          color: theme.buttonText,
-                        }}
-                        onClick={() => copyRecord(record)}
-                        type="button"
-                      >
-                        Copy
-                      </button>
-                      <button
-                        style={{
-                          ...styles.inlineActionButton,
-                          borderColor: theme.buttonBorder,
-                          color: theme.buttonText,
-                        }}
-                        onClick={() => void runAction(() => regenerateRecord(record))}
-                        type="button"
-                      >
-                        Regenerate
-                      </button>
-                      <button
-                        style={{
-                          ...styles.inlineActionButton,
-                          borderColor: theme.buttonBorder,
-                          color: theme.buttonText,
-                        }}
-                        onClick={() => void runAction(() => appendRecordToNote(record))}
-                        type="button"
-                      >
-                        Append Note
-                      </button>
-                    </div>
-                  </article>
-                ))}
+              <div ref={transcriptRef} style={styles.executionList}>
+                {transcriptRecords.map(renderTranscriptRecord)}
               </div>
             </div>
         </div>
@@ -2430,6 +2516,178 @@ function createExecutionRecord(
   };
 }
 
+function formatRecordSourceForChat(record: WebAIExecutionRecord): string {
+  const source = normalizeCapturedText(record.sourcePrompt || "");
+  if (!source) {
+    return "";
+  }
+
+  const command = extractPromptLine(source, "Command");
+  const userMessage =
+    extractPromptSection(source, "User message") ||
+    (!hasPromptSections(source) ? source : "");
+  const compactMessage = truncateTextForDisplay(userMessage, 1200);
+
+  if (command) {
+    return compactMessage ? `${command}\n\n${compactMessage}` : command;
+  }
+  if (record.kind === "web" && compactMessage) {
+    return `/${WEB_SEARCH_COMMAND.slashCommand} ${compactMessage}`;
+  }
+  if (record.kind === "mcp" && compactMessage) {
+    return `/${ZOTERO_MCP_COMMAND.slashCommand} ${compactMessage}`;
+  }
+  if (record.kind === "pdf" && compactMessage) {
+    return `/${CURRENT_PDF_COMMAND.slashCommand} ${compactMessage}`;
+  }
+  return compactMessage;
+}
+
+function getRecordKindLabel(kind: WebAIExecutionKind): string {
+  if (kind === "assistant") {
+    return "AI";
+  }
+  if (kind === "mcp") {
+    return "MCP";
+  }
+  if (kind === "pdf") {
+    return "PDF";
+  }
+  if (kind === "skill") {
+    return "Skill";
+  }
+  if (kind === "web") {
+    return "Web";
+  }
+  return "Error";
+}
+
+function getRecordBubbleBackground(
+  kind: WebAIExecutionKind,
+  theme: SidebarTheme,
+): string {
+  if (kind === "error") {
+    return theme.errorBackground;
+  }
+  if (kind === "web") {
+    return theme.noticeBackground;
+  }
+  if (kind === "mcp") {
+    return theme.accentBackground;
+  }
+  return theme.assistantMessageBackground;
+}
+
+function getRecordBubbleBorder(
+  kind: WebAIExecutionKind,
+  theme: SidebarTheme,
+): string {
+  if (kind === "error") {
+    return theme.errorBorder;
+  }
+  if (kind === "web") {
+    return theme.noticeBorder;
+  }
+  if (kind === "mcp") {
+    return theme.accentBorder;
+  }
+  return theme.assistantMessageBorder;
+}
+
+function getRecordBadgeBackground(
+  kind: WebAIExecutionKind,
+  theme: SidebarTheme,
+): string {
+  if (kind === "error") {
+    return theme.errorBackground;
+  }
+  if (kind === "web") {
+    return theme.noticeBackground;
+  }
+  if (kind === "mcp") {
+    return theme.accentBackground;
+  }
+  return theme.badgeBackground;
+}
+
+function getRecordBadgeBorder(
+  kind: WebAIExecutionKind,
+  theme: SidebarTheme,
+): string {
+  if (kind === "error") {
+    return theme.errorBorder;
+  }
+  if (kind === "web") {
+    return theme.noticeBorder;
+  }
+  if (kind === "mcp") {
+    return theme.accentBorder;
+  }
+  return theme.badgeBorder;
+}
+
+function getRecordBadgeText(
+  kind: WebAIExecutionKind,
+  theme: SidebarTheme,
+): string {
+  if (kind === "error") {
+    return theme.errorText;
+  }
+  if (kind === "web") {
+    return theme.noticeText;
+  }
+  if (kind === "mcp") {
+    return theme.accentText;
+  }
+  return theme.badgeText;
+}
+
+function extractPromptLine(text: string, label: string): string {
+  const match = text.match(new RegExp(`(?:^|\\n)${escapeRegExp(label)}:\\s*(.+)`));
+  return match?.[1]?.trim() || "";
+}
+
+function extractPromptSection(text: string, label: string): string {
+  const sectionNames = [
+    "Command",
+    "User message",
+    "Zotero context",
+    "Metadata",
+    "Selected passage",
+    "Paper content",
+    "Web search context",
+    "MCP context",
+    "Zotero MCP bridge",
+    "Note",
+  ];
+  const nextSectionPattern = sectionNames
+    .filter((name) => name !== label)
+    .map(escapeRegExp)
+    .join("|");
+  const pattern = new RegExp(
+    `(?:^|\\n)${escapeRegExp(label)}:\\s*\\n?([\\s\\S]*?)(?=\\n(?:${nextSectionPattern}):|$)`,
+  );
+  return pattern.exec(text)?.[1]?.trim() || "";
+}
+
+function hasPromptSections(text: string): boolean {
+  return /(^|\n)(Command|User message|Zotero context|Metadata|Selected passage|Paper content|Web search context|MCP context|Zotero MCP bridge):/i.test(
+    text,
+  );
+}
+
+function truncateTextForDisplay(text: string, limit: number): string {
+  const normalized = normalizeCapturedText(text);
+  if (normalized.length <= limit) {
+    return normalized;
+  }
+  return `${normalized.slice(0, limit).trim()}\n\n[Hidden long context]`;
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function formatSkillExecutionBody({
   contextSummary,
   message,
@@ -3183,6 +3441,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flex: "1 1 auto",
     flexDirection: "column",
+    fontFamily:
+      'Arial, "Helvetica Neue", "Segoe UI", system-ui, sans-serif',
     gap: "8px",
     minHeight: 0,
     minWidth: 0,
@@ -3284,18 +3544,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   executionPanel: {
     border: "1px solid #e0e0e0",
-    borderRadius: "8px",
+    borderRadius: "10px",
     boxSizing: "border-box",
     display: "flex",
     flex: "0 0 auto",
     flexDirection: "column",
-    gap: "8px",
-    height: "260px",
-    maxHeight: "70vh",
-    minHeight: "150px",
+    gap: "10px",
+    height: "430px",
+    maxHeight: "78vh",
+    minHeight: "260px",
     minWidth: 0,
     overflow: "hidden",
-    padding: "8px",
+    padding: "10px",
     resize: "vertical",
     width: "100%",
   },
@@ -3327,21 +3587,23 @@ const styles: Record<string, React.CSSProperties> = {
   resultsLayout: {
     display: "flex",
     flex: "1 1 auto",
-    gap: "8px",
+    gap: "10px",
     minHeight: 0,
     minWidth: 0,
     overflow: "hidden",
   },
   historyPanel: {
-    borderRight: "1px solid #e0e0e0",
+    border: "1px solid #e0e0e0",
+    borderRadius: "8px",
+    boxSizing: "border-box",
     display: "flex",
-    flex: "0 0 240px",
+    flex: "0 0 250px",
     flexDirection: "column",
-    gap: "6px",
-    maxWidth: "34%",
+    gap: "8px",
+    maxWidth: "36%",
     minHeight: 0,
     minWidth: "220px",
-    paddingRight: "8px",
+    padding: "8px",
   },
   historyHeader: {
     alignItems: "center",
@@ -3395,10 +3657,81 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flex: "1 1 auto",
     flexDirection: "column",
-    gap: "6px",
+    gap: "18px",
     minWidth: 0,
     minHeight: 0,
     overflow: "auto",
+    padding: "4px 8px 12px",
+  },
+  chatTurn: {
+    borderRadius: "10px",
+    display: "flex",
+    flexDirection: "column",
+    gap: "10px",
+    minWidth: 0,
+    outlineOffset: "2px",
+    padding: "2px",
+  },
+  messageRow: {
+    display: "flex",
+    minWidth: 0,
+    width: "100%",
+  },
+  userMessageRow: {
+    justifyContent: "flex-end",
+  },
+  assistantMessageRow: {
+    justifyContent: "flex-start",
+  },
+  userBubble: {
+    border: "1px solid #d7eed7",
+    borderRadius: "14px",
+    boxSizing: "border-box",
+    maxWidth: "78%",
+    minWidth: "160px",
+    padding: "13px 16px",
+  },
+  assistantBubble: {
+    border: "1px solid #e2e2e2",
+    borderRadius: "14px",
+    boxSizing: "border-box",
+    maxWidth: "94%",
+    minWidth: "220px",
+    padding: "14px 16px",
+  },
+  messageHeader: {
+    alignItems: "center",
+    display: "flex",
+    gap: "10px",
+    justifyContent: "space-between",
+    marginBottom: "8px",
+    minWidth: 0,
+  },
+  messageAuthor: {
+    fontSize: typography.body,
+    fontWeight: 700,
+    lineHeight: 1.3,
+  },
+  messageTimestamp: {
+    flex: "0 0 auto",
+    fontSize: typography.caption,
+    lineHeight: 1.25,
+    whiteSpace: "nowrap",
+  },
+  userMessageBody: {
+    fontSize: typography.body,
+    lineHeight: 1.58,
+    overflowWrap: "anywhere",
+    whiteSpace: "pre-wrap",
+    wordBreak: "break-word",
+  },
+  assistantTitleLine: {
+    alignItems: "center",
+    display: "flex",
+    flex: "1 1 auto",
+    flexWrap: "wrap",
+    gap: "8px",
+    minWidth: 0,
   },
   executionItem: {
     border: "1px solid #e0e0e0",
@@ -3415,12 +3748,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   executionKind: {
     border: "1px solid #c9c9c9",
-    borderRadius: "4px",
+    borderRadius: "6px",
     flex: "0 0 auto",
     fontSize: typography.meta,
     fontWeight: 700,
-    padding: "1px 5px",
-    textTransform: "uppercase",
+    lineHeight: 1.25,
+    padding: "2px 7px",
   },
   executionSummaryText: {
     display: "flex",
@@ -3429,7 +3762,7 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
   },
   executionItemTitle: {
-    fontSize: typography.label,
+    fontSize: typography.body,
     fontWeight: 700,
     overflow: "hidden",
     textOverflow: "ellipsis",
@@ -3437,6 +3770,8 @@ const styles: Record<string, React.CSSProperties> = {
   },
   executionItemSubtitle: {
     fontSize: typography.meta,
+    lineHeight: 1.35,
+    marginBottom: "8px",
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
@@ -3444,11 +3779,10 @@ const styles: Record<string, React.CSSProperties> = {
   executionBody: {
     background: "transparent",
     border: 0,
-    fontFamily:
-      "ui-monospace, SFMono-Regular, Menlo, Consolas, Liberation Mono, monospace",
-    fontSize: typography.meta,
-    lineHeight: 1.45,
-    margin: "6px 0 0",
+    fontFamily: "inherit",
+    fontSize: typography.body,
+    lineHeight: 1.64,
+    margin: "8px 0 0",
     maxHeight: "none",
     overflow: "auto",
     padding: 0,
@@ -3482,7 +3816,8 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexWrap: "wrap",
     gap: "6px",
-    marginTop: "8px",
+    justifyContent: "flex-start",
+    marginTop: "12px",
   },
   inlineActionButton: {
     appearance: "none",
@@ -3498,12 +3833,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   composerPanel: {
     border: "1px solid #e0e0e0",
-    borderRadius: "20px",
+    borderRadius: "10px",
     display: "flex",
     flex: "0 0 auto",
     flexDirection: "column",
-    gap: "7px",
-    padding: "10px 12px",
+    gap: "8px",
+    padding: "11px 12px 10px",
     position: "relative",
   },
   slashMenu: {
@@ -3580,11 +3915,11 @@ const styles: Record<string, React.CSSProperties> = {
     boxSizing: "border-box",
     font: "inherit",
     fontSize: typography.body,
-    lineHeight: 1.45,
-    maxHeight: "180px",
-    minHeight: "48px",
+    lineHeight: 1.55,
+    maxHeight: "260px",
+    minHeight: "108px",
     outline: "none",
-    padding: "2px 0",
+    padding: "2px 0 4px",
     resize: "vertical",
     width: "100%",
   },
