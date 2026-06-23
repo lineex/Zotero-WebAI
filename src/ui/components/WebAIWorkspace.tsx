@@ -61,6 +61,7 @@ interface PromptInsertResult {
   method?: string;
   ok: boolean;
   reason?: string;
+  submitAttempted?: boolean;
   submitted?: boolean;
 }
 
@@ -1094,14 +1095,14 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           body: formatPendingReplyBody(result, service.label, prompt.length, text),
           kind: nextCaptureOptions.kind || "assistant",
           sourcePrompt: nextCaptureOptions.sourcePrompt,
-          status: "running",
+          status: result.ok && result.submitted ? "running" : "error",
           subtitle: nextCaptureOptions.subtitle || service.label,
           title: nextCaptureOptions.title || text.record.webAnswer,
           turnID: nextCaptureOptions.turnID,
           userPrompt: nextCaptureOptions.userPrompt,
         })
       : null;
-    if (pendingRecordID) {
+    if (pendingRecordID && result.ok && result.submitted) {
       pendingCaptureRecordIDRef.current = pendingRecordID;
       nextCaptureOptions.pendingRecordID = pendingRecordID;
     }
@@ -1119,7 +1120,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         ),
       );
     }
-    setIsError(false);
+    setIsError(!(result.ok && result.submitted));
   };
 
   const copyRecord = (record: WebAIExecutionRecord) => {
@@ -2626,7 +2627,7 @@ function insertPromptWithFrameScript(
     const timeoutId = timerHost.setTimeout(() => {
       cleanup();
       resolve({ ok: false, reason: "frame-script-timeout" });
-    }, submit ? 4500 : 1800);
+    }, submit ? 20000 : 1800);
 
     const finish = (result: PromptInsertResult) => {
       timerHost.clearTimeout(timeoutId);
@@ -2999,7 +3000,13 @@ async function insertPromptIntoDocument(
   writePromptToComposer(composer, prompt);
   await waitForPromptHydration(doc, composer, prompt);
   const submitted = submit ? await submitWebChatPrompt(doc, composer) : false;
-  return { ok: true, method, submitted };
+  return {
+    ok: true,
+    method,
+    reason: submit && !submitted ? "submit-not-confirmed" : undefined,
+    submitAttempted: submit,
+    submitted,
+  };
 }
 
 function readWebChatTextFromDocument(doc: Document): string {
@@ -3725,26 +3732,72 @@ async function submitWebChatPrompt(
   doc: Document,
   composer: HTMLElement,
 ): Promise<boolean> {
-  const delays = [60, 120, 200, 320, 480, 650];
+  const fingerprint = createPromptFingerprint(getComposerText(composer));
+  const delays = [80, 120, 180, 260, 360, 520, 760, 1000, 1300];
   for (const delay of delays) {
     await sleepInDocument(doc, delay);
-    const submitButton = findWebChatSubmitButton(doc, composer);
-    if (submitButton) {
+    dispatchComposerEvents(composer, getComposerText(composer));
+
+    const submitButtons = findWebChatSubmitButtons(doc, composer);
+    for (const submitButton of submitButtons.slice(0, 8)) {
       clickSubmitButton(submitButton);
-      return true;
+      if (await waitForPromptSubmitted(doc, composer, fingerprint, 520)) {
+        return true;
+      }
+      const clickableParent = findClickableAncestor(submitButton, composer);
+      if (clickableParent && clickableParent !== submitButton) {
+        clickSubmitButton(clickableParent);
+        if (await waitForPromptSubmitted(doc, composer, fingerprint, 520)) {
+          return true;
+        }
+      }
+    }
+
+    if (dispatchEnterToComposer(doc, composer)) {
+      if (await waitForPromptSubmitted(doc, composer, fingerprint, 620)) {
+        return true;
+      }
+    }
+    if (dispatchModifiedEnterToComposer(doc, composer, "ctrl")) {
+      if (await waitForPromptSubmitted(doc, composer, fingerprint, 420)) {
+        return true;
+      }
+    }
+    if (dispatchModifiedEnterToComposer(doc, composer, "meta")) {
+      if (await waitForPromptSubmitted(doc, composer, fingerprint, 420)) {
+        return true;
+      }
+    }
+    if (submitNearestComposerForm(composer)) {
+      if (await waitForPromptSubmitted(doc, composer, fingerprint, 620)) {
+        return true;
+      }
     }
   }
 
-  return dispatchEnterToComposer(doc, composer);
+  return false;
 }
 
-function findWebChatSubmitButton(
+function findWebChatSubmitButtons(
   doc: Document,
   composer: HTMLElement,
-): HTMLElement | null {
-  const buttons = Array.from(
-    doc.querySelectorAll("button, [role='button'], [aria-label], [title]"),
-  ) as HTMLElement[];
+): HTMLElement[] {
+  const buttons = queryElementsDeep(
+    doc,
+    [
+      "button",
+      "[role='button']",
+      "[aria-label]",
+      "[title]",
+      "[data-testid]",
+      "[data-test]",
+      "[data-qa]",
+      "[class*='send']",
+      "[class*='Send']",
+      "[class*='submit']",
+      "[class*='Submit']",
+    ].join(","),
+  );
   const visibleButtons = buttons
     .filter((button) => isVisibleSubmitCandidate(button, composer))
     .sort(
@@ -3752,7 +3805,7 @@ function findWebChatSubmitButton(
         scoreSubmitCandidate(right, composer) -
         scoreSubmitCandidate(left, composer),
     );
-  return visibleButtons[0] || null;
+  return visibleButtons;
 }
 
 function isVisibleSubmitCandidate(
@@ -3768,6 +3821,10 @@ function isVisibleSubmitCandidate(
   const label = [
     element.getAttribute("aria-label"),
     element.getAttribute("title"),
+    element.getAttribute("data-testid"),
+    element.getAttribute("data-test"),
+    element.getAttribute("data-qa"),
+    element.getAttribute("class"),
     element.textContent,
   ]
     .join(" ")
@@ -3778,10 +3835,10 @@ function isVisibleSubmitCandidate(
     element.getAttribute("data-disabled") === "true";
   const composerRect = composer?.getBoundingClientRect();
   const nearComposer = composerRect
-    ? rect.bottom >= composerRect.top - 120 &&
-      rect.top <= composerRect.bottom + 120 &&
-      rect.right >= composerRect.left &&
-      rect.left <= composerRect.right + 180
+    ? rect.bottom >= composerRect.top - 180 &&
+      rect.top <= composerRect.bottom + 180 &&
+      rect.right >= composerRect.left - 40 &&
+      rect.left <= composerRect.right + 220
     : false;
   const iconLike = Boolean(
     element.querySelector("svg") ||
@@ -3811,6 +3868,10 @@ function scoreSubmitCandidate(
   const label = [
     element.getAttribute("aria-label"),
     element.getAttribute("title"),
+    element.getAttribute("data-testid"),
+    element.getAttribute("data-test"),
+    element.getAttribute("data-qa"),
+    element.getAttribute("class"),
     element.textContent,
   ]
     .join(" ")
@@ -3836,6 +3897,35 @@ function scoreSubmitCandidate(
     }
   }
   return score;
+}
+
+function queryElementsDeep(
+  root: Document | Element | ShadowRoot,
+  selector: string,
+): HTMLElement[] {
+  const results: HTMLElement[] = [];
+  const visit = (scope: Document | Element | ShadowRoot) => {
+    try {
+      const selectedNodes = scope.querySelectorAll(selector) as NodeListOf<Element>;
+      for (let index = 0; index < selectedNodes.length; index += 1) {
+        const element = selectedNodes.item(index) as HTMLElement;
+        if (typeof element.getBoundingClientRect === "function") {
+          results.push(element);
+        }
+      }
+      const allNodes = scope.querySelectorAll("*") as NodeListOf<Element>;
+      for (let index = 0; index < allNodes.length; index += 1) {
+        const shadowRoot = (allNodes.item(index) as HTMLElement).shadowRoot;
+        if (shadowRoot) {
+          visit(shadowRoot);
+        }
+      }
+    } catch {
+      // Some embedded pages reject selectors in shadow roots.
+    }
+  };
+  visit(root);
+  return Array.from(new Set(results));
 }
 
 function clickSubmitButton(element: HTMLElement): void {
@@ -3874,24 +3964,191 @@ function clickSubmitButton(element: HTMLElement): void {
 }
 
 function dispatchEnterToComposer(doc: Document, composer: HTMLElement): boolean {
+  return dispatchKeyboardSubmitToComposer(doc, composer, {});
+}
+
+function dispatchModifiedEnterToComposer(
+  doc: Document,
+  composer: HTMLElement,
+  modifier: "ctrl" | "meta",
+): boolean {
+  return dispatchKeyboardSubmitToComposer(doc, composer, {
+    ctrlKey: modifier === "ctrl",
+    metaKey: modifier === "meta",
+  });
+}
+
+function dispatchKeyboardSubmitToComposer(
+  doc: Document,
+  composer: HTMLElement,
+  modifiers: Partial<KeyboardEventInit>,
+): boolean {
   const win = doc.defaultView;
   try {
-    ["keydown", "keypress", "keyup"].forEach((type) => {
-      composer.dispatchEvent(
-        new (win?.KeyboardEvent || KeyboardEvent)(type, {
-          bubbles: true,
-          cancelable: true,
-          code: "Enter",
-          key: "Enter",
-          keyCode: 13,
-          which: 13,
-        } as KeyboardEventInit),
-      );
+    const targets = Array.from(
+      new Set<EventTarget>(
+        [composer, doc.activeElement, doc, win].filter(Boolean) as EventTarget[],
+      ),
+    );
+    targets.forEach((target) => {
+      ["keydown", "keypress", "keyup"].forEach((type) => {
+        target.dispatchEvent(
+          new (win?.KeyboardEvent || KeyboardEvent)(type, {
+            bubbles: true,
+            cancelable: true,
+            code: "Enter",
+            key: "Enter",
+            keyCode: 13,
+            shiftKey: false,
+            which: 13,
+            ...modifiers,
+          } as KeyboardEventInit),
+        );
+      });
     });
     return true;
   } catch {
     return false;
   }
+}
+
+function submitNearestComposerForm(composer: HTMLElement): boolean {
+  const form = composer.closest("form") as HTMLFormElement | null;
+  if (!form) {
+    return false;
+  }
+  try {
+    if (typeof form.requestSubmit === "function") {
+      form.requestSubmit();
+      return true;
+    }
+  } catch {
+    // Some chat apps intercept synthetic form submissions.
+  }
+  try {
+    form.dispatchEvent(new Event("submit", { bubbles: true, cancelable: true }));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function findClickableAncestor(
+  element: HTMLElement,
+  composer: HTMLElement,
+): HTMLElement | null {
+  const composerRect = composer.getBoundingClientRect();
+  let current = element.parentElement as HTMLElement | null;
+  let depth = 0;
+  while (current && depth < 4) {
+    depth += 1;
+    const rect = current.getBoundingClientRect();
+    if (
+      rect.width >= 18 &&
+      rect.height >= 18 &&
+      rect.width <= 180 &&
+      rect.height <= 180 &&
+      rect.bottom >= composerRect.top - 180 &&
+      rect.top <= composerRect.bottom + 180 &&
+      rect.right >= composerRect.left - 40 &&
+      rect.left <= composerRect.right + 220
+    ) {
+      return current;
+    }
+    current = current.parentElement as HTMLElement | null;
+  }
+  return null;
+}
+
+function getComposerText(element: HTMLElement): string {
+  if ("value" in element) {
+    return String((element as HTMLTextAreaElement | HTMLInputElement).value || "");
+  }
+  const htmlElement = element as HTMLElement & { innerText?: string };
+  return String(htmlElement.innerText || element.textContent || "");
+}
+
+function normalizeComposerProbeText(value: string): string {
+  return String(value || "")
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function createPromptFingerprint(prompt: string): { head: string; tail: string } {
+  const normalized = normalizeComposerProbeText(prompt);
+  return {
+    head: normalized.slice(0, Math.min(96, normalized.length)),
+    tail: normalized.slice(Math.max(0, normalized.length - 96)),
+  };
+}
+
+function textMatchesPromptFingerprint(
+  text: string,
+  fingerprint: { head: string; tail: string },
+): boolean {
+  const normalized = normalizeComposerProbeText(text);
+  if (!fingerprint.head) {
+    return false;
+  }
+  if (normalized.includes(fingerprint.head)) {
+    return true;
+  }
+  return fingerprint.tail.length >= 24 && normalized.includes(fingerprint.tail);
+}
+
+async function waitForPromptSubmitted(
+  doc: Document,
+  composer: HTMLElement,
+  fingerprint: { head: string; tail: string },
+  timeoutMs: number,
+): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt <= timeoutMs) {
+    await sleepInDocument(doc, 90);
+    const currentComposer = findWebChatComposer(doc) || composer;
+    const composerStillHasPrompt = textMatchesPromptFingerprint(
+      getComposerText(currentComposer),
+      fingerprint,
+    );
+    if (!composerStillHasPrompt) {
+      return true;
+    }
+    if (hasWebChatGeneratingIndicator(doc, composer)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function hasWebChatGeneratingIndicator(doc: Document, composer: HTMLElement): boolean {
+  const composerRect = composer.getBoundingClientRect();
+  return queryElementsDeep(
+    doc,
+    "button,[role='button'],[aria-label],[title],[data-testid],[class]",
+  ).some((element) => {
+    const rect = element.getBoundingClientRect();
+    const label = [
+      element.getAttribute("aria-label"),
+      element.getAttribute("title"),
+      element.getAttribute("data-testid"),
+      element.getAttribute("class"),
+      element.textContent,
+    ]
+      .join(" ")
+      .toLowerCase();
+    const nearComposer =
+      rect.bottom >= composerRect.top - 220 &&
+      rect.top <= composerRect.bottom + 220;
+    return (
+      nearComposer &&
+      /(stop|abort|cancel|generating|responding|loading|\u505c\u6b62|\u4e2d\u6b62|\u53d6\u6d88|\u751f\u6210\u4e2d|\u56de\u7b54\u4e2d)/i.test(
+        label,
+      )
+    );
+  });
 }
 
 function isVisibleComposerCandidate(element: HTMLElement): boolean {
@@ -4027,11 +4284,22 @@ ${dispatchComposerEvents.toString()}
 ${waitForPromptHydration.toString()}
 ${sleepInDocument.toString()}
 ${submitWebChatPrompt.toString()}
-${findWebChatSubmitButton.toString()}
+${findWebChatSubmitButtons.toString()}
+${queryElementsDeep.toString()}
 ${isVisibleSubmitCandidate.toString()}
 ${scoreSubmitCandidate.toString()}
 ${clickSubmitButton.toString()}
 ${dispatchEnterToComposer.toString()}
+${dispatchModifiedEnterToComposer.toString()}
+${dispatchKeyboardSubmitToComposer.toString()}
+${submitNearestComposerForm.toString()}
+${findClickableAncestor.toString()}
+${getComposerText.toString()}
+${normalizeComposerProbeText.toString()}
+${createPromptFingerprint.toString()}
+${textMatchesPromptFingerprint.toString()}
+${waitForPromptSubmitted.toString()}
+${hasWebChatGeneratingIndicator.toString()}
 ${insertPromptIntoDocument.toString()}`;
 }
 
