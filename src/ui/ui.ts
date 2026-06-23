@@ -44,6 +44,8 @@ interface ContextPaneLike {
 const SECTION_PANE_ID = "ai-assistant-sidebar";
 const LIBRARY_HOST_ID = "ai-assistant-pane-library-mount";
 const READER_HOST_ID = "ai-assistant-pane-reader-mount";
+const TAB_BAR_ACTION_HOST_ID = "zotero-webai-tabbar-actions";
+const TAB_BAR_ACTION_HOST_CLASS = "zotero-webai-tabbar-actions";
 const TAB_BAR_BUTTON_ID = "zotero-webai-tabbar-button";
 const TAB_BAR_BUTTON_CLASS = "zotero-webai-tabbar-button";
 const LEGACY_STANDALONE_ARTIFACT_IDS = [
@@ -312,11 +314,13 @@ export class UIFactory {
 
   private static ensureTabBarButton(win: Window): boolean {
     const existing = win.document.getElementById(TAB_BAR_BUTTON_ID);
-    if (existing) {
+    const host = this.findOrCreateTabBarButtonHost(win);
+    if (existing && host && existing.parentElement !== host) {
+      host.appendChild(existing);
+    }
+    if (existing && host) {
       return true;
     }
-
-    const host = this.findTabBarButtonHost(win.document);
     if (!host) {
       this.scheduleTabBarButtonRetry(win);
       return false;
@@ -357,8 +361,61 @@ export class UIFactory {
     return button;
   }
 
-  private static findTabBarButtonHost(doc: Document): HTMLElement | null {
+  private static findOrCreateTabBarButtonHost(win: Window): HTMLElement | null {
+    const doc = win.document as Document & {
+      createXULElement?: (tagName: string) => HTMLElement;
+    };
+    const existing = doc.getElementById(
+      TAB_BAR_ACTION_HOST_ID,
+    ) as HTMLElement | null;
+    if (existing) {
+      return existing;
+    }
+
+    const tabBar = this.findTabBarElement(doc);
+    if (!tabBar) {
+      return null;
+    }
+
+    const parent = this.resolveTabBarActionParent(tabBar);
+    const host = (doc.createXULElement?.("hbox") ??
+      doc.createElementNS(HTML_NS, "div")) as HTMLElement;
+    host.id = TAB_BAR_ACTION_HOST_ID;
+    host.className = TAB_BAR_ACTION_HOST_CLASS;
+    host.setAttribute("data-pane-id", SECTION_PANE_ID);
+    host.setAttribute("align", "center");
+
+    if (parent === tabBar) {
+      tabBar.appendChild(host);
+    } else {
+      parent.appendChild(host);
+    }
+    return host;
+  }
+
+  private static resolveTabBarActionParent(tabBar: HTMLElement): HTMLElement {
+    const parent = tabBar.parentElement as HTMLElement | null;
+    if (!parent) {
+      return tabBar;
+    }
+    const id = `${tabBar.id || ""}`.toLowerCase();
+    const className = `${tabBar.className || ""}`.toLowerCase();
+    const role = `${tabBar.getAttribute("role") || ""}`.toLowerCase();
+    if (id.includes("toolbar") || className.includes("toolbar")) {
+      return tabBar;
+    }
+    if (role === "tablist" || id.includes("tabs")) {
+      return parent;
+    }
+    return tabBar;
+  }
+
+  private static findTabBarElement(doc: Document): HTMLElement | null {
     const selectors = [
+      "#zotero-tabs-toolbar .zotero-tabs",
+      "#zotero-tabs-toolbar [role='tablist']",
+      "#zotero-tabs-wrapper",
+      "#zotero-tabs-container",
       "#zotero-tabs-toolbar",
       "#zotero-tabs",
       "#zotero-tab-bar",
@@ -367,6 +424,7 @@ export class UIFactory {
       ".zotero-tabs-toolbar",
       ".zotero-tabbar",
       ".zotero-tabs",
+      ".tabbrowser-tabs",
       ".tabs-toolbar",
       '[role="tablist"]',
     ];
@@ -424,6 +482,7 @@ export class UIFactory {
       this.ensureRightSidebarOpen(win);
       this.clickSidebarSectionButton(win);
       await this.requestSectionRefresh(win);
+      this.focusWebAISection(win);
     } catch (error) {
       ztoolkit.log("Failed to open Zotero WebAI sidebar from tab bar:", error);
     }
@@ -506,6 +565,45 @@ export class UIFactory {
         bubbles: true,
         cancelable: true,
       }),
+    );
+  }
+
+  private static focusWebAISection(win: Window): void {
+    const mount = this.findWebAISectionMount(win.document);
+    if (!mount) {
+      return;
+    }
+
+    const paneRoot = mount.closest(
+      "zotero-context-pane,#zotero-context-pane,.zotero-context-pane,#zotero-item-pane",
+    ) as HTMLElement | null;
+    if (paneRoot) {
+      paneRoot.scrollTop = 0;
+    }
+
+    const scrollContainers = Array.from(
+      mount.querySelectorAll(
+        ".ai-assistant-pane,.ai-assistant-pane-mount",
+      ) as NodeListOf<Element>,
+    ).filter(
+      (node): node is HTMLElement =>
+        typeof node === "object" && node !== null && "scrollTop" in node,
+    );
+    scrollContainers.forEach((container) => {
+      container.scrollTop = 0;
+    });
+
+    const focusTarget =
+      mount.querySelector<HTMLElement>("textarea,button,[tabindex]") || mount;
+    focusTarget.focus?.();
+  }
+
+  private static findWebAISectionMount(doc: Document): HTMLElement | null {
+    return (
+      (doc.getElementById(READER_HOST_ID) as HTMLElement | null) ||
+      (doc.getElementById(LIBRARY_HOST_ID) as HTMLElement | null) ||
+      (doc.getElementById("ai-assistant-pane-reader") as HTMLElement | null) ||
+      (doc.getElementById("ai-assistant-pane-library") as HTMLElement | null)
     );
   }
 

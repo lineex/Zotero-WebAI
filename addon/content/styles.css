@@ -15,6 +15,21 @@
   font: inherit;
 }
 
+.zotero-webai-tabbar-actions {
+  align-items: center;
+  display: inline-flex;
+  flex: 0 0 auto;
+  gap: 2px;
+  margin-inline-start: auto;
+  min-width: 0;
+  order: 9999;
+  padding-inline: 4px 6px;
+}
+
+.zotero-webai-reader-toolbar-button {
+  display: none !important;
+}
+
 .zotero-webai-tabbar-button {
   align-items: center;
   appearance: none;
@@ -25,10 +40,10 @@
   cursor: pointer;
   display: inline-flex;
   flex: 0 0 auto;
-  height: 26px;
+  height: 28px;
   justify-content: center;
-  margin-inline-start: 4px;
-  min-width: 26px;
+  margin: 0;
+  min-width: 28px;
   padding: 4px;
 }
 
@@ -38,8 +53,14 @@
 
 .zotero-webai-tabbar-button img {
   display: block;
-  height: 18px;
-  width: 18px;
+  height: 20px;
+  width: 20px;
+}
+
+.ai-assistant-pane-mount,
+.ai-assistant-pane {
+  contain: layout paint;
+  overflow: hidden;
 }
 
 .ai-assistant-web-browser {

@@ -430,7 +430,6 @@ export function initReaderIntegration(): void {
 
   popupHandler = onRenderTextSelectionPopup;
   contextMenuHandler = onCreateViewContextMenu;
-  toolbarHandler = onRenderToolbar;
 
   Zotero.Reader.registerEventListener(
     "renderTextSelectionPopup",
@@ -440,11 +439,6 @@ export function initReaderIntegration(): void {
   Zotero.Reader.registerEventListener(
     "createViewContextMenu",
     contextMenuHandler,
-    config.addonID,
-  );
-  Zotero.Reader.registerEventListener(
-    "renderToolbar",
-    toolbarHandler,
     config.addonID,
   );
 

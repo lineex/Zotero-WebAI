@@ -13,6 +13,7 @@ import {
   type Settings,
 } from "../../services/settingsManager";
 import type { ScopeContext } from "../../types/scope";
+import { getPref, setPref } from "../../utils/prefs";
 import { getSidebarTheme, type SidebarTheme } from "../theme";
 import { typography } from "../typography";
 
@@ -86,6 +87,16 @@ interface WebAIExecutionRecord {
   title: string;
 }
 
+interface WebAIChatSession {
+  createdAt: string;
+  id: string;
+  records: WebAIExecutionRecord[];
+  serviceID: WebAIServiceId;
+  serviceLabel: string;
+  title: string;
+  updatedAt: string;
+}
+
 type WebAIExecutionRecordDraft = Omit<
   WebAIExecutionRecord,
   "createdAt" | "id"
@@ -121,6 +132,12 @@ interface AssistantCaptureParts {
   thinking?: string;
 }
 
+interface AssistantCandidate {
+  body: string;
+  raw: string;
+  thinking?: string;
+}
+
 type MarkdownBlock =
   | { text: string; type: "blockquote" | "code" | "math" | "paragraph" }
   | { items: string[]; ordered: boolean; type: "list" }
@@ -152,7 +169,10 @@ const MCP_SCHEMA_TEXT_LIMIT = 2200;
 const MCP_TOOL_CATALOG_TEXT_LIMIT = 52000;
 const MCP_BRIDGE_SCAN_TEXT_LIMIT = 120000;
 const MCP_BRIDGE_POLL_MS = 900;
-const EXECUTION_RECORD_LIMIT = 24;
+const EXECUTION_RECORD_LIMIT = 1000;
+const SESSION_HISTORY_PREF = "webAIChatSessions";
+const SESSION_HISTORY_LIMIT = 1000;
+const SESSION_RECORD_LIMIT = 1000;
 const WEB_SEARCH_RESULT_LIMIT = 6;
 const WEB_SEARCH_CONTEXT_TEXT_LIMIT = 7000;
 const WEBAI_NOTE_TITLE = "Zotero WebAI Notes";
@@ -194,6 +214,7 @@ const WEB_SEARCH_COMMAND: WebAISkill = {
   promptPrefix: "",
   slashCommand: "websearch",
 };
+const INITIAL_CHAT_SESSIONS = loadChatSessions();
 
 export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   contextSummary,
@@ -213,13 +234,24 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [zaiLoginMode, setZaiLoginMode] = useState(false);
+  const [chatSessions, setChatSessions] = useState<WebAIChatSession[]>(() =>
+    INITIAL_CHAT_SESSIONS,
+  );
+  const [activeSessionID, setActiveSessionIDState] = useState<string | null>(
+    () => INITIAL_CHAT_SESSIONS[0]?.id || null,
+  );
   const [executionRecords, setExecutionRecords] = useState<
     WebAIExecutionRecord[]
-  >([]);
-  const [activeRecordID, setActiveRecordID] = useState<string | null>(null);
+  >(() =>
+    clampSessionRecords(INITIAL_CHAT_SESSIONS[0]?.records || []),
+  );
+  const [activeRecordID, setActiveRecordID] = useState<string | null>(
+    () => INITIAL_CHAT_SESSIONS[0]?.records.find((record) => !record.hidden)?.id || null,
+  );
   const frameHostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<Element | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
+  const activeSessionIDRef = useRef<string | null>(activeSessionID);
   const activeMCPBridgeTokensRef = useRef<Set<string>>(new Set());
   const assistantCaptureRunRef = useRef(0);
   const handledMCPRequestsRef = useRef<Set<string>>(new Set());
@@ -233,10 +265,68 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setExecutionRecords((current) =>
       [record, ...current].slice(0, EXECUTION_RECORD_LIMIT),
     );
+    upsertChatSession(record);
     if (!record.hidden) {
       setActiveRecordID(record.id);
     }
     return record.id;
+  };
+
+  const upsertChatSession = (record: WebAIExecutionRecord) => {
+    const sessionID = activeSessionIDRef.current || createSessionID();
+    if (!activeSessionIDRef.current) {
+      setActiveSessionID(sessionID);
+    }
+    setChatSessions((current) =>
+      saveChatSessions(
+        updateChatSessionsWithRecord(current, {
+          record,
+          serviceID: service.id,
+          serviceLabel: service.label,
+          sessionID,
+        }),
+      ),
+    );
+  };
+
+  const setActiveSessionID = (sessionID: string | null) => {
+    activeSessionIDRef.current = sessionID;
+    setActiveSessionIDState(sessionID);
+  };
+
+  const replaceActiveSessionRecords = (records: WebAIExecutionRecord[]) => {
+    const sessionID = activeSessionIDRef.current;
+    if (!sessionID) {
+      setExecutionRecords(records);
+      return;
+    }
+    setExecutionRecords(records);
+    setChatSessions((current) =>
+      saveChatSessions(
+        updateChatSessionsRecords(current, {
+          records,
+          serviceID: service.id,
+          serviceLabel: service.label,
+          sessionID,
+        }),
+      ),
+    );
+  };
+
+  const openSession = (session: WebAIChatSession) => {
+    const records = clampSessionRecords(session.records);
+    setActiveSessionID(session.id);
+    setExecutionRecords(records);
+    setActiveRecordID(records.find((record) => !record.hidden)?.id || null);
+    setStatus(`Loaded session: ${session.title}`);
+    setIsError(false);
+  };
+
+  const clearCurrentSession = () => {
+    replaceActiveSessionRecords([]);
+    setActiveRecordID(null);
+    setStatus("Cleared the current session.");
+    setIsError(false);
   };
 
   const customSkills = useMemo(
@@ -394,7 +484,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     captured: string,
     options: AssistantReplyRecordOptions = {},
   ) => {
-    const normalized = normalizeAssistantCapture(captured, options.sourcePrompt);
+    const normalized = normalizeAssistantCapture(
+      captured,
+      options.sourcePrompt,
+      lastCapturedAssistantTextRef.current,
+    );
     const dedupeKey = [normalized.body, normalized.thinking || ""].join("\n\n");
     if (
       !normalized.body ||
@@ -428,6 +522,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         baselineText || "",
         () => runId === assistantCaptureRunRef.current,
         options?.sourcePrompt,
+        () => lastCapturedAssistantTextRef.current,
       );
       if (!captured || runId !== assistantCaptureRunRef.current) {
         return;
@@ -621,11 +716,18 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   };
 
   const startNewConversation = () => {
+    const session = createChatSession({
+      records: [],
+      serviceID: service.id,
+      serviceLabel: service.label,
+    });
     setMessage("");
     setSelectedSkillID(null);
+    setActiveSessionID(session.id);
     setExecutionRecords([]);
     setActiveRecordID(null);
     setIsError(false);
+    setChatSessions((current) => saveChatSessions([session, ...current]));
     activeMCPBridgeTokensRef.current.clear();
     handledMCPRequestsRef.current.clear();
     lastCapturedAssistantTextRef.current = "";
@@ -860,6 +962,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 {record.subtitle}
               </div>
             )}
+            <div style={{ ...styles.executionBody, color: theme.text }}>
+              {renderMarkdownContent(record.body, theme)}
+            </div>
             {record.thinking && (
               <details style={styles.thinkingDetails}>
                 <summary
@@ -868,7 +973,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                     color: theme.mutedText,
                   }}
                 >
-                  Thinking
+                  Process hidden
                 </summary>
                 <pre
                   style={{
@@ -880,9 +985,6 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 </pre>
               </details>
             )}
-            <div style={{ ...styles.executionBody, color: theme.text }}>
-              {renderMarkdownContent(record.body, theme)}
-            </div>
             <div style={styles.recordActions}>
               <button
                 style={{
@@ -1133,7 +1235,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 borderColor: theme.buttonBorder,
                 color: theme.buttonText,
               }}
-              onClick={() => setExecutionRecords([])}
+              onClick={clearCurrentSession}
               type="button"
             >
               Clear
@@ -1183,7 +1285,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       </div>
       )}
 
-      {!isZAILoginMode && visibleExecutionRecords.length > 0 && (
+      {!isZAILoginMode && (visibleExecutionRecords.length > 0 || historyVisible) && (
         <div
           style={{
             ...styles.executionPanel,
@@ -1197,7 +1299,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             </span>
             <div style={styles.executionHeaderActions}>
               <span style={{ ...styles.executionMeta, color: theme.mutedText }}>
-                {visibleExecutionRecords.length} turns
+                {visibleExecutionRecords.length} turns / {chatSessions.length} sessions
               </span>
             </div>
           </div>
@@ -1227,40 +1329,68 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                     </button>
                   </div>
                   <div style={styles.historyList}>
-                    {visibleExecutionRecords.map((record) => (
+                    {chatSessions.length === 0 && (
+                      <div
+                        style={{
+                          ...styles.historyEmpty,
+                          color: theme.mutedText,
+                        }}
+                      >
+                        No saved sessions yet.
+                      </div>
+                    )}
+                    {chatSessions.map((session) => {
+                      const visibleCount = session.records.filter(
+                        (record) => !record.hidden,
+                      ).length;
+                      return (
                       <button
-                        key={`history-${record.id}`}
+                        key={`session-${session.id}`}
                         style={{
                           ...styles.historyItem,
                           background:
-                            activeRecordID === record.id
+                            activeSessionID === session.id
                               ? theme.badgeBackground
                               : theme.surfaceBackground,
                           borderColor:
-                            activeRecordID === record.id
+                            activeSessionID === session.id
                               ? theme.badgeBorder
                               : theme.softBorder,
                           color: theme.text,
                         }}
-                        onClick={() => setActiveRecordID(record.id)}
+                        onClick={() => openSession(session)}
                         type="button"
                       >
-                        <span style={styles.historyItemTitle}>{record.title}</span>
+                        <span style={styles.historyItemTitle}>
+                          {session.title}
+                        </span>
                         <span
                           style={{
                             ...styles.historyItemMeta,
                             color: theme.mutedText,
                           }}
                         >
-                          {getRecordKindLabel(record.kind)} - {formatRecordTimestamp(record.createdAt)}
+                          {visibleCount} turns - {formatRecordTimestamp(session.updatedAt)}
                         </span>
                       </button>
-                    ))}
+                      );
+                    })}
                   </div>
                 </aside>
               )}
               <div ref={transcriptRef} style={styles.executionList}>
-                {transcriptRecords.map(renderTranscriptRecord)}
+                {transcriptRecords.length ? (
+                  transcriptRecords.map(renderTranscriptRecord)
+                ) : (
+                  <div
+                    style={{
+                      ...styles.emptyConversation,
+                      color: theme.mutedText,
+                    }}
+                  >
+                    Select a saved session or send a message to start a new turn.
+                  </div>
+                )}
               </div>
             </div>
         </div>
@@ -2552,6 +2682,278 @@ function createExecutionRecord(
   };
 }
 
+function createSessionID(): string {
+  return `session-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
+function createChatSession({
+  records,
+  serviceID,
+  serviceLabel,
+}: {
+  records: WebAIExecutionRecord[];
+  serviceID: WebAIServiceId;
+  serviceLabel: string;
+}): WebAIChatSession {
+  const now = new Date().toISOString();
+  return {
+    createdAt: now,
+    id: createSessionID(),
+    records: clampSessionRecords(records),
+    serviceID,
+    serviceLabel,
+    title: buildSessionTitle(records, serviceLabel),
+    updatedAt: now,
+  };
+}
+
+function loadChatSessions(): WebAIChatSession[] {
+  const value = getPref(SESSION_HISTORY_PREF);
+  if (typeof value !== "string" || !value.trim()) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return clampChatSessions(
+      parsed.map(normalizeChatSession).filter(isChatSession),
+    );
+  } catch (error) {
+    ztoolkit.log("Failed to load Zotero WebAI chat sessions:", error);
+    return [];
+  }
+}
+
+function saveChatSessions(sessions: WebAIChatSession[]): WebAIChatSession[] {
+  const normalized = clampChatSessions(sessions);
+  try {
+    setPref(SESSION_HISTORY_PREF, JSON.stringify(normalized));
+  } catch (error) {
+    ztoolkit.log("Failed to save Zotero WebAI chat sessions:", error);
+  }
+  return normalized;
+}
+
+function normalizeChatSession(value: unknown): WebAIChatSession | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const source = value as Partial<WebAIChatSession>;
+  const records = clampSessionRecords(
+    Array.isArray(source.records)
+      ? source.records.map(normalizeExecutionRecord).filter(isExecutionRecord)
+      : [],
+  );
+  const now = new Date().toISOString();
+  const serviceID: WebAIServiceId =
+    source.serviceID === "zai" ? "zai" : "deepseek";
+  const serviceLabel =
+    typeof source.serviceLabel === "string" && source.serviceLabel.trim()
+      ? source.serviceLabel.trim()
+      : serviceID === "zai"
+        ? "Z.ai Web"
+        : "DeepSeek Web";
+  return {
+    createdAt:
+      typeof source.createdAt === "string" && source.createdAt
+        ? source.createdAt
+        : records.at(-1)?.createdAt || now,
+    id:
+      typeof source.id === "string" && source.id.trim()
+        ? source.id.trim()
+        : createSessionID(),
+    records,
+    serviceID,
+    serviceLabel,
+    title:
+      typeof source.title === "string" && source.title.trim()
+        ? source.title.trim()
+        : buildSessionTitle(records, serviceLabel),
+    updatedAt:
+      typeof source.updatedAt === "string" && source.updatedAt
+        ? source.updatedAt
+        : records[0]?.createdAt || now,
+  };
+}
+
+function isChatSession(
+  session: WebAIChatSession | null,
+): session is WebAIChatSession {
+  return Boolean(session);
+}
+
+function normalizeExecutionRecord(value: unknown): WebAIExecutionRecord | null {
+  if (!value || typeof value !== "object") {
+    return null;
+  }
+  const source = value as Partial<WebAIExecutionRecord>;
+  if (typeof source.body !== "string" || typeof source.title !== "string") {
+    return null;
+  }
+  const kind: WebAIExecutionKind =
+    source.kind === "assistant" ||
+    source.kind === "mcp" ||
+    source.kind === "pdf" ||
+    source.kind === "skill" ||
+    source.kind === "web" ||
+    source.kind === "error"
+      ? source.kind
+      : "assistant";
+  const status: WebAIExecutionRecord["status"] =
+    source.status === "running" ||
+    source.status === "error" ||
+    source.status === "done"
+      ? source.status
+      : "done";
+  return {
+    body: source.body,
+    createdAt:
+      typeof source.createdAt === "string" && source.createdAt
+        ? source.createdAt
+        : new Date().toISOString(),
+    hidden: Boolean(source.hidden),
+    id:
+      typeof source.id === "string" && source.id.trim()
+        ? source.id.trim()
+        : `exec-${Date.now().toString(36)}-${Math.random()
+            .toString(36)
+            .slice(2, 8)}`,
+    kind,
+    sourcePrompt:
+      typeof source.sourcePrompt === "string" ? source.sourcePrompt : undefined,
+    status,
+    subtitle: typeof source.subtitle === "string" ? source.subtitle : undefined,
+    thinking: typeof source.thinking === "string" ? source.thinking : undefined,
+    title: source.title,
+  };
+}
+
+function isExecutionRecord(
+  record: WebAIExecutionRecord | null,
+): record is WebAIExecutionRecord {
+  return Boolean(record);
+}
+
+function updateChatSessionsWithRecord(
+  sessions: WebAIChatSession[],
+  {
+    record,
+    serviceID,
+    serviceLabel,
+    sessionID,
+  }: {
+    record: WebAIExecutionRecord;
+    serviceID: WebAIServiceId;
+    serviceLabel: string;
+    sessionID: string;
+  },
+): WebAIChatSession[] {
+  const index = sessions.findIndex((session) => session.id === sessionID);
+  if (index < 0) {
+    const session = createChatSession({
+      records: [record],
+      serviceID,
+      serviceLabel,
+    });
+    return [{ ...session, id: sessionID }, ...sessions];
+  }
+
+  const existing = sessions[index];
+  const records = clampSessionRecords([record, ...existing.records]);
+  const updated: WebAIChatSession = {
+    ...existing,
+    records,
+    serviceID,
+    serviceLabel,
+    title: buildSessionTitle(records, serviceLabel),
+    updatedAt: record.createdAt,
+  };
+  return [updated, ...sessions.filter((session) => session.id !== sessionID)];
+}
+
+function updateChatSessionsRecords(
+  sessions: WebAIChatSession[],
+  {
+    records,
+    serviceID,
+    serviceLabel,
+    sessionID,
+  }: {
+    records: WebAIExecutionRecord[];
+    serviceID: WebAIServiceId;
+    serviceLabel: string;
+    sessionID: string;
+  },
+): WebAIChatSession[] {
+  const normalizedRecords = clampSessionRecords(records);
+  const now = new Date().toISOString();
+  const index = sessions.findIndex((session) => session.id === sessionID);
+  if (index < 0) {
+    const session = createChatSession({
+      records: normalizedRecords,
+      serviceID,
+      serviceLabel,
+    });
+    return [{ ...session, id: sessionID }, ...sessions];
+  }
+
+  const existing = sessions[index];
+  const updated: WebAIChatSession = {
+    ...existing,
+    records: normalizedRecords,
+    serviceID,
+    serviceLabel,
+    title: buildSessionTitle(normalizedRecords, serviceLabel),
+    updatedAt: normalizedRecords[0]?.createdAt || now,
+  };
+  return [updated, ...sessions.filter((session) => session.id !== sessionID)];
+}
+
+function clampChatSessions(sessions: WebAIChatSession[]): WebAIChatSession[] {
+  const seen = new Set<string>();
+  return sessions
+    .filter((session) => {
+      if (!session.id || seen.has(session.id)) {
+        return false;
+      }
+      seen.add(session.id);
+      return true;
+    })
+    .sort(
+      (left, right) =>
+        Date.parse(right.updatedAt || "") - Date.parse(left.updatedAt || ""),
+    )
+    .slice(0, SESSION_HISTORY_LIMIT);
+}
+
+function clampSessionRecords(
+  records: WebAIExecutionRecord[],
+): WebAIExecutionRecord[] {
+  return records.slice(0, SESSION_RECORD_LIMIT);
+}
+
+function buildSessionTitle(
+  records: WebAIExecutionRecord[],
+  serviceLabel: string,
+): string {
+  const visibleRecord = records.find((record) => !record.hidden);
+  const source =
+    visibleRecord?.sourcePrompt &&
+    (extractPromptSection(visibleRecord.sourcePrompt, "User message") ||
+      (!hasPromptSections(visibleRecord.sourcePrompt)
+        ? visibleRecord.sourcePrompt
+        : ""));
+  const titleSource = normalizeCapturedText(source || visibleRecord?.title || "");
+  if (titleSource) {
+    return truncateTextForDisplay(titleSource, 64).replace(/\n+/g, " ");
+  }
+  return `${serviceLabel} session`;
+}
+
 function formatRecordSourceForChat(record: WebAIExecutionRecord): string {
   const source = normalizeCapturedText(record.sourcePrompt || "");
   if (!source) {
@@ -3218,12 +3620,20 @@ function escapeHTML(value: string): string {
 }
 
 function extractLatestAssistantText(text: string, sourcePrompt = ""): string {
+  return extractAssistantCandidate(text, sourcePrompt).raw;
+}
+
+function extractAssistantCandidate(
+  text: string,
+  sourcePrompt = "",
+  previousCapture = "",
+): AssistantCandidate {
   const cleaned = text
     .replace(/ZOTERO_WEBAI_MCP_REQUEST[\s\S]*?END_ZOTERO_WEBAI_MCP_REQUEST/g, "")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
   if (!cleaned) {
-    return "";
+    return { body: "", raw: "" };
   }
 
   const markerMatches = [
@@ -3246,17 +3656,29 @@ function extractLatestAssistantText(text: string, sourcePrompt = ""): string {
       ? cleaned.slice(lastMarkerIndex + lastMarker.length).trim()
       : cleaned;
   const stripped = stripPromptEcho(candidate || cleaned, sourcePrompt);
-  return truncateText(stripAssistantWebNoise(stripped), MCP_CONTEXT_TEXT_LIMIT);
+  const normalized = normalizeAssistantCapture(
+    stripped,
+    sourcePrompt,
+    previousCapture,
+  );
+  return {
+    body: normalized.body,
+    raw: normalized.body,
+    thinking: normalized.thinking,
+  };
 }
 
 function normalizeAssistantCapture(
   captured: string,
   sourcePrompt = "",
+  previousCapture = "",
 ): AssistantCaptureParts {
   const normalized = stripAssistantWebNoise(
     stripPromptEcho(captured, sourcePrompt),
   );
-  const split = splitThinkingFromAnswer(normalized);
+  const split = splitThinkingFromAnswer(
+    stripRepeatedCapturePrefix(normalized, previousCapture),
+  );
   return {
     body: truncateText(stripAssistantWebNoise(split.body), MCP_CONTEXT_TEXT_LIMIT),
     thinking: split.thinking
@@ -3331,43 +3753,98 @@ function stripAssistantWebNoise(value: string): string {
     .trim();
 }
 
+function stripRepeatedCapturePrefix(value: string, previousCapture = ""): string {
+  const text = normalizeCapturedText(value);
+  const previous = normalizeCapturedText(previousCapture);
+  if (!text || !previous || previous.length < 80) {
+    return text;
+  }
+
+  if (text.startsWith(previous)) {
+    return text.slice(previous.length).trim();
+  }
+
+  const previousTail = previous.slice(-Math.min(previous.length, 1200));
+  const index = text.lastIndexOf(previousTail);
+  if (index >= 0) {
+    return text.slice(index + previousTail.length).trim();
+  }
+
+  return text;
+}
+
 function splitThinkingFromAnswer(value: string): AssistantCaptureParts {
   const text = normalizeCapturedText(value);
-  const tagMatch = text.match(/<think>([\s\S]*?)<\/think>/i);
-  if (tagMatch) {
+  const tagMatches = Array.from(text.matchAll(/<think>([\s\S]*?)<\/think>/gi));
+  if (tagMatches.length) {
+    const thinking = tagMatches
+      .map((match) => match[1]?.trim())
+      .filter(Boolean)
+      .join("\n\n");
     return {
-      body: text.replace(tagMatch[0], "").trim(),
-      thinking: tagMatch[1]?.trim() || undefined,
+      body: text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(),
+      thinking: thinking || undefined,
     };
   }
 
-  const lines = text.split(/\n/);
-  const thinkingStart = lines.findIndex((line) =>
-    /^(思考链|思考过程|推理过程|深度思考|Reasoning|Thinking|Chain of thought)\s*[:：]?$/i.test(
-      line.trim(),
-    ),
-  );
-  if (thinkingStart < 0) {
-    return { body: text };
+  const splitBySections = splitInternalSectionsFromAnswer(text);
+  if (splitBySections.thinking) {
+    return splitBySections;
   }
 
-  const answerStart = lines.findIndex(
-    (line, index) =>
-      index > thinkingStart &&
-      /^(最终答案|答案|回答|结论|Answer|Final answer|Result)\s*[:：]?$/i.test(
-        line.trim(),
-      ),
-  );
-  if (answerStart < 0) {
-    return {
-      body: lines.filter((_, index) => index !== thinkingStart).join("\n").trim(),
-    };
+  return { body: text };
+}
+
+function splitInternalSectionsFromAnswer(value: string): AssistantCaptureParts {
+  const lines = value.split(/\n/);
+  const bodyLines: string[] = [];
+  const internalLines: string[] = [];
+  let mode: "body" | "internal" = "body";
+  let sawInternal = false;
+  let sawAnswer = false;
+
+  for (const rawLine of lines) {
+    const line = rawLine.trim();
+    if (isInternalProcessHeading(line)) {
+      mode = "internal";
+      sawInternal = true;
+      internalLines.push(rawLine);
+      continue;
+    }
+    if (isFinalAnswerHeading(line)) {
+      mode = "body";
+      sawAnswer = true;
+      continue;
+    }
+
+    if (mode === "internal") {
+      internalLines.push(rawLine);
+    } else {
+      bodyLines.push(rawLine);
+    }
   }
 
-  return {
-    body: lines.slice(answerStart + 1).join("\n").trim(),
-    thinking: lines.slice(thinkingStart + 1, answerStart).join("\n").trim(),
-  };
+  const body = bodyLines.join("\n").trim();
+  const thinking = internalLines.join("\n").trim();
+  if (!sawInternal) {
+    return { body: value };
+  }
+  if (!body && !sawAnswer) {
+    return { body: "", thinking };
+  }
+  return { body, thinking: thinking || undefined };
+}
+
+function isInternalProcessHeading(value: string): boolean {
+  return /^(思考链|思考过程|推理过程|深度思考|运行代码|代码运行|运行过程|执行过程|工具调用|工具执行|中间步骤|过程|Reasoning|Thinking|Chain of thought|Running code|Code execution|Execution process|Tool call|Tool calls|Tool output|Intermediate steps?)\s*[:：]?$/i.test(
+    value,
+  );
+}
+
+function isFinalAnswerHeading(value: string): boolean {
+  return /^(最终答案|答案|回答|结论|结果|正文|Answer|Final answer|Result|Response)\s*[:：]?$/i.test(
+    value,
+  );
 }
 
 function looksLikePromptEcho(value: string): boolean {
@@ -3754,31 +4231,45 @@ async function waitForStableAssistantText(
   baselineText: string,
   shouldContinue: () => boolean,
   sourcePrompt = "",
+  getPreviousCapture: () => string = () => "",
 ): Promise<string> {
-  const baseline = extractLatestAssistantText(baselineText, sourcePrompt);
+  const baseline = extractAssistantCandidate(
+    baselineText,
+    sourcePrompt,
+    getPreviousCapture(),
+  ).body;
   let bestCandidate = "";
   let stableReads = 0;
 
-  for (let attempt = 0; attempt < 40; attempt += 1) {
+  for (let attempt = 0; attempt < 55; attempt += 1) {
     if (!shouldContinue()) {
       return "";
     }
-    await sleepWithHostTimer(attempt < 2 ? 1200 : 1800);
+    await sleepWithHostTimer(attempt < 2 ? 1000 : 1500);
     const result = await readWebChatText(frame);
     if (!result.ok || !result.text) {
       continue;
     }
-    const candidate = extractLatestAssistantText(result.text, sourcePrompt);
-    if (!candidate || candidate === baseline || candidate.length < 8) {
+    const candidate = extractAssistantCandidate(
+      result.text,
+      sourcePrompt,
+      getPreviousCapture(),
+    );
+    if (
+      !candidate.body ||
+      candidate.body === baseline ||
+      candidate.body.length < 8 ||
+      looksLikeInternalBridgeOutput(candidate.body)
+    ) {
       continue;
     }
-    if (candidate === bestCandidate) {
+    if (candidate.body === bestCandidate) {
       stableReads += 1;
     } else {
-      bestCandidate = candidate;
+      bestCandidate = candidate.body;
       stableReads = 0;
     }
-    if (stableReads >= 1) {
+    if (stableReads >= 2) {
       return bestCandidate;
     }
   }
@@ -3845,14 +4336,15 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "8px",
     minHeight: 0,
     minWidth: 0,
+    overflow: "hidden",
     width: "100%",
   },
   frameHost: {
     border: "1px solid #e0e0e0",
     borderRadius: "6px",
     display: "flex",
-    flex: "1 1 620px",
-    minHeight: "520px",
+    flex: "1 1 560px",
+    minHeight: "420px",
     minWidth: 0,
     overflow: "hidden",
   },
@@ -4052,6 +4544,11 @@ const styles: Record<string, React.CSSProperties> = {
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
+  historyEmpty: {
+    fontSize: typography.meta,
+    lineHeight: 1.45,
+    padding: "8px",
+  },
   executionList: {
     display: "flex",
     flex: "1 1 auto",
@@ -4061,6 +4558,17 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 0,
     overflow: "auto",
     padding: "4px 8px 12px",
+  },
+  emptyConversation: {
+    alignItems: "center",
+    display: "flex",
+    flex: "1 1 auto",
+    fontSize: typography.meta,
+    justifyContent: "center",
+    lineHeight: 1.5,
+    minHeight: "120px",
+    padding: "16px",
+    textAlign: "center",
   },
   chatTurn: {
     borderRadius: "10px",
