@@ -87,6 +87,8 @@ interface WebAIExecutionRecord {
   subtitle?: string;
   thinking?: string;
   title: string;
+  turnID?: string;
+  userPrompt?: string;
 }
 
 interface WebAIChatSession {
@@ -110,6 +112,8 @@ interface AssistantReplyRecordOptions {
   sourcePrompt?: string;
   subtitle?: string;
   title?: string;
+  turnID?: string;
+  userPrompt?: string;
 }
 
 interface WebSearchPromptContextResult {
@@ -128,6 +132,11 @@ interface WebChatTextResult {
   ok: boolean;
   reason?: string;
   text?: string;
+}
+
+interface WebAITranscriptTurn {
+  id: string;
+  records: WebAIExecutionRecord[];
 }
 
 interface AssistantCaptureParts {
@@ -250,6 +259,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [isError, setIsError] = useState(false);
   const [message, setMessage] = useState("");
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
+  const [editingTurnID, setEditingTurnID] = useState<string | null>(null);
+  const [editingPrompt, setEditingPrompt] = useState("");
+  const [turnVersionSelections, setTurnVersionSelections] = useState<
+    Record<string, number>
+  >({});
   const [historyVisible, setHistoryVisible] = useState(false);
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
@@ -293,6 +307,12 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     upsertChatSession(record);
     if (!record.hidden) {
       setActiveRecordID(record.id);
+      if (record.turnID) {
+        setTurnVersionSelections((current) => ({
+          ...current,
+          [record.turnID || ""]: Number.MAX_SAFE_INTEGER,
+        }));
+      }
     }
     return record.id;
   };
@@ -383,6 +403,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     executionRecordsRef.current = records;
     setExecutionRecords(records);
     setActiveRecordID(records.find((record) => !record.hidden)?.id || null);
+    setEditingTurnID(null);
+    setEditingPrompt("");
+    setTurnVersionSelections({});
     setStatus(`Loaded session: ${session.title}`);
     setIsError(false);
   };
@@ -390,6 +413,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const clearCurrentSession = () => {
     replaceActiveSessionRecords([]);
     setActiveRecordID(null);
+    setEditingTurnID(null);
+    setEditingPrompt("");
+    setTurnVersionSelections({});
     setStatus("Cleared the current session.");
     setIsError(false);
   };
@@ -420,8 +446,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     () => executionRecords.filter((record) => !record.hidden),
     [executionRecords],
   );
-  const transcriptRecords = useMemo(
-    () => [...visibleExecutionRecords].reverse(),
+  const transcriptTurns = useMemo(
+    () => buildTranscriptTurns(visibleExecutionRecords),
     [visibleExecutionRecords],
   );
 
@@ -577,6 +603,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       subtitle: options.subtitle || service.label,
       thinking: normalized.thinking,
       title: options.title || "Captured web answer",
+      turnID: options.turnID,
+      userPrompt: options.userPrompt,
     };
     if (options.pendingRecordID && replaceExecutionRecord(options.pendingRecordID, draft)) {
       if (pendingCaptureRecordIDRef.current === options.pendingRecordID) {
@@ -613,6 +641,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       subtitle: options.subtitle || service.label,
       thinking: normalized.thinking,
       title: options.title || "Web answer",
+      turnID: options.turnID,
+      userPrompt: options.userPrompt,
     });
   };
 
@@ -662,6 +692,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       status: "running",
       subtitle: options.subtitle || service.label,
       title: "Capture needed",
+      turnID: options.turnID,
+      userPrompt: options.userPrompt,
     });
   };
 
@@ -681,13 +713,15 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       sourcePrompt: captureOptions?.sourcePrompt || prompt,
     };
     const pendingRecordID = shouldCreatePendingReplyRecord(prompt)
-      ? appendExecutionRecord({
+        ? appendExecutionRecord({
           body: formatPendingReplyBody(result, service.label, prompt.length),
           kind: nextCaptureOptions.kind || "assistant",
           sourcePrompt: nextCaptureOptions.sourcePrompt,
           status: "running",
           subtitle: nextCaptureOptions.subtitle || service.label,
           title: nextCaptureOptions.title || "Web answer",
+          turnID: nextCaptureOptions.turnID,
+          userPrompt: nextCaptureOptions.userPrompt,
         })
       : null;
     if (pendingRecordID) {
@@ -718,6 +752,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   };
 
   const regenerateRecord = async (record: WebAIExecutionRecord) => {
+    const turnID = record.turnID || getRecordTurnKey(record);
+    const userPrompt = formatRecordSourceForChat(record);
     if (record.kind === "web") {
       const query = record.sourcePrompt || record.title.replace(/^Web search:\s*/i, "");
       await fetchWebSearchContextForConversation({
@@ -758,6 +794,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       await deliverPrompt(prompt, `Regenerating ${record.title}.`, {
         ...buildPDFReplyRecordOptions(service.label),
         sourcePrompt: prompt,
+        turnID,
+        userPrompt,
       });
       return;
     }
@@ -771,6 +809,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       sourcePrompt: prompt,
       subtitle: service.label,
       title: `Regenerated: ${record.title}`,
+      turnID,
+      userPrompt,
     });
   };
 
@@ -789,11 +829,18 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     if (!captured) {
       throw new Error("No assistant result found in the embedded web chat");
     }
+    const pendingRecord = pendingCaptureRecordIDRef.current
+      ? executionRecordsRef.current.find(
+          (record) => record.id === pendingCaptureRecordIDRef.current,
+        )
+      : null;
     recordAssistantReply(
       captured,
       {
         ...buildCommandReplyRecordOptions(selectedSkill, service.label),
         pendingRecordID: pendingCaptureRecordIDRef.current || undefined,
+        turnID: pendingRecord?.turnID,
+        userPrompt: pendingRecord?.userPrompt,
       },
     );
     setStatus(`Captured latest ${service.label} answer into Zotero WebAI.`);
@@ -873,6 +920,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setActiveSessionID(session.id);
     setExecutionRecords([]);
     setActiveRecordID(null);
+    setEditingTurnID(null);
+    setEditingPrompt("");
+    setTurnVersionSelections({});
     setIsError(false);
     setChatSessions((current) => saveChatSessions([session, ...current]));
     activeMCPBridgeTokensRef.current.clear();
@@ -883,14 +933,23 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setStatus(`Started a new ${service.label} conversation.`);
   };
 
-  const sendPrompt = async () => {
-    const draftMessage = message;
+  const sendPrompt = async (
+    overrideMessage?: string,
+    overrideTurnID?: string,
+  ) => {
+    const isComposerSend = typeof overrideMessage !== "string";
+    const draftMessage = isComposerSend ? message : overrideMessage;
+    const skillForResolution = isComposerSend ? selectedSkill : null;
     if (isNewConversationCommand(draftMessage)) {
       startNewConversation();
       return;
     }
 
-    const resolved = resolveSkillFromMessage(draftMessage, slashCommands, selectedSkill);
+    const resolved = resolveSkillFromMessage(
+      draftMessage,
+      slashCommands,
+      skillForResolution,
+    );
     if (resolved.skill?.kind === "new") {
       startNewConversation();
       return;
@@ -898,11 +957,21 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     if (!resolved.skill && !resolved.message.trim()) {
       throw new Error("Write a message or choose a / command.");
     }
-    setMessage("");
+    if (isComposerSend) {
+      setMessage("");
+    }
     setSelectedSkillID(null);
+    setEditingTurnID(null);
+    setEditingPrompt("");
     const isMCPCommand = resolved.skill?.kind === "mcp";
     const isPDFCommand = resolved.skill?.kind === "pdf";
     const isWebSearchCommand = resolved.skill?.kind === "web";
+    const turnID = overrideTurnID || createTurnID();
+    const userPrompt = buildRecordUserPrompt(
+      draftMessage,
+      resolved.message,
+      resolved.skill,
+    );
 
     const promptInput = {
       contextSummary,
@@ -924,6 +993,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         status: pdfTextLength ? "done" : "error",
         subtitle: `/${CURRENT_PDF_COMMAND.slashCommand}`,
         title: "Current PDF command",
+        turnID,
+        userPrompt,
       });
       if (!pdfTextLength) {
         throw new Error(
@@ -946,6 +1017,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         status: "done",
         subtitle: `/${resolved.skill.slashCommand}`,
         title: `Skill: ${resolved.skill.label}`,
+        turnID,
+        userPrompt,
       });
     }
     const mcpBridgeToken = isMCPCommand && shouldUseMCPInConversation(settings)
@@ -980,10 +1053,16 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     if (mcpBridgeToken && mcpContext.contextText) {
       activeMCPBridgeTokensRef.current.add(mcpBridgeToken);
     }
+    const latestMCPContext = formatLatestMCPExecutionContext(
+      executionRecordsRef.current,
+    );
+    const combinedMCPContext = [latestMCPContext, mcpContext.contextText]
+      .filter(Boolean)
+      .join("\n\n");
     const prompt = buildWorkspacePrompt({
       ...promptInput,
       includeFullText: isPDFCommand,
-      mcpContext: mcpContext.contextText,
+      mcpContext: combinedMCPContext,
       webContext: webContext.contextText,
     });
     await deliverPrompt(
@@ -992,6 +1071,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       {
         ...buildCommandReplyRecordOptions(resolved.skill, service.label),
         sourcePrompt: prompt,
+        turnID,
+        userPrompt,
       },
     );
   };
@@ -1025,14 +1106,44 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     }
   };
 
-  const renderTranscriptRecord = (record: WebAIExecutionRecord) => {
+  const selectTurnVersion = (turnID: string, index: number) => {
+    setTurnVersionSelections((current) => ({
+      ...current,
+      [turnID]: index,
+    }));
+  };
+
+  const beginEditingTurn = (turn: WebAITranscriptTurn, prompt: string) => {
+    setEditingTurnID(turn.id);
+    setEditingPrompt(prompt);
+    setStatus("Edit the user prompt in place, then save to generate a new answer.");
+    setIsError(false);
+  };
+
+  const submitEditedTurn = async (turn: WebAITranscriptTurn) => {
+    const prompt = editingPrompt.trim();
+    if (!prompt) {
+      throw new Error("Edited prompt is empty.");
+    }
+    await sendPrompt(prompt, turn.id);
+  };
+
+  const renderTranscriptTurn = (turn: WebAITranscriptTurn) => {
+    const activeIndex = turn.records.findIndex((record) => record.id === activeRecordID);
+    const selectedIndex =
+      turnVersionSelections[turn.id] ??
+      (activeIndex >= 0 ? activeIndex : turn.records.length - 1);
+    const versionIndex = clampVersionIndex(selectedIndex, turn.records.length);
+    const record = turn.records[versionIndex] || turn.records[turn.records.length - 1];
     const displayPrompt = formatRecordSourceForChat(record);
     const isActive = activeRecordID === record.id;
+    const isEditing = editingTurnID === turn.id;
+    const hasVersions = turn.records.length > 1;
 
     return (
       <section
         data-record-id={record.id}
-        key={record.id}
+        key={turn.id}
         style={{
           ...styles.chatTurn,
           outline: isActive ? `1px solid ${theme.badgeBorder}` : "none",
@@ -1056,7 +1167,97 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 </span>
               </div>
               <div style={{ ...styles.userMessageBody, color: theme.text }}>
-                {renderMarkdownContent(displayPrompt, theme)}
+                {isEditing ? (
+                  <textarea
+                    onChange={(event) => setEditingPrompt(event.target.value)}
+                    onKeyDown={(event) => {
+                      if ((event.ctrlKey || event.metaKey) && event.key === "Enter") {
+                        event.preventDefault();
+                        void runAction(() => submitEditedTurn(turn));
+                      }
+                    }}
+                    style={{
+                      ...styles.userEditInput,
+                      background: theme.surfaceBackground,
+                      borderColor: theme.buttonBorder,
+                      color: theme.text,
+                    }}
+                    value={editingPrompt}
+                  />
+                ) : (
+                  renderMarkdownContent(displayPrompt, theme)
+                )}
+              </div>
+              <div style={styles.recordActions}>
+                {isEditing ? (
+                  <>
+                    <button
+                      style={{
+                        ...styles.inlineActionButton,
+                        borderColor: theme.buttonBorder,
+                        color: theme.buttonText,
+                      }}
+                      onClick={() => void runAction(() => submitEditedTurn(turn))}
+                      type="button"
+                    >
+                      Save
+                    </button>
+                    <button
+                      style={{
+                        ...styles.inlineActionButton,
+                        borderColor: theme.buttonBorder,
+                        color: theme.buttonText,
+                      }}
+                      onClick={() => {
+                        setEditingTurnID(null);
+                        setEditingPrompt("");
+                      }}
+                      type="button"
+                    >
+                      Cancel
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <button
+                      style={{
+                        ...styles.inlineActionButton,
+                        borderColor: theme.buttonBorder,
+                        color: theme.buttonText,
+                      }}
+                      onClick={() => {
+                        copyTextToClipboard(displayPrompt);
+                        setStatus("Copied user prompt.");
+                        setIsError(false);
+                      }}
+                      type="button"
+                    >
+                      Copy
+                    </button>
+                    <button
+                      style={{
+                        ...styles.inlineActionButton,
+                        borderColor: theme.buttonBorder,
+                        color: theme.buttonText,
+                      }}
+                      onClick={() => void runAction(() => regenerateRecord(record))}
+                      type="button"
+                    >
+                      Regenerate
+                    </button>
+                    <button
+                      style={{
+                        ...styles.inlineActionButton,
+                        borderColor: theme.buttonBorder,
+                        color: theme.buttonText,
+                      }}
+                      onClick={() => beginEditingTurn(turn, displayPrompt)}
+                      type="button"
+                    >
+                      Edit
+                    </button>
+                  </>
+                )}
               </div>
             </article>
           </div>
@@ -1172,6 +1373,45 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 追加笔记
               </button>
             </div>
+            )}
+            {hasVersions && (
+              <div style={styles.versionPager}>
+                <button
+                  disabled={versionIndex <= 0}
+                  style={{
+                    ...styles.inlineActionButton,
+                    borderColor: theme.buttonBorder,
+                    color: versionIndex <= 0 ? theme.mutedText : theme.buttonText,
+                    cursor: versionIndex <= 0 ? "not-allowed" : "pointer",
+                  }}
+                  onClick={() => selectTurnVersion(turn.id, versionIndex - 1)}
+                  type="button"
+                >
+                  Previous
+                </button>
+                <span style={{ ...styles.versionLabel, color: theme.mutedText }}>
+                  {versionIndex + 1} / {turn.records.length}
+                </span>
+                <button
+                  disabled={versionIndex >= turn.records.length - 1}
+                  style={{
+                    ...styles.inlineActionButton,
+                    borderColor: theme.buttonBorder,
+                    color:
+                      versionIndex >= turn.records.length - 1
+                        ? theme.mutedText
+                        : theme.buttonText,
+                    cursor:
+                      versionIndex >= turn.records.length - 1
+                        ? "not-allowed"
+                        : "pointer",
+                  }}
+                  onClick={() => selectTurnVersion(turn.id, versionIndex + 1)}
+                  type="button"
+                >
+                  Next
+                </button>
+              </div>
             )}
           </article>
         </div>
@@ -1454,7 +1694,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             </span>
             <div style={styles.executionHeaderActions}>
               <span style={{ ...styles.executionMeta, color: theme.mutedText }}>
-                {visibleExecutionRecords.length} turns / {chatSessions.length} sessions
+                {transcriptTurns.length} turns / {chatSessions.length} sessions
               </span>
             </div>
           </div>
@@ -1534,8 +1774,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 </aside>
               )}
               <div ref={transcriptRef} style={styles.executionList}>
-                {transcriptRecords.length ? (
-                  transcriptRecords.map(renderTranscriptRecord)
+                {transcriptTurns.length ? (
+                  transcriptTurns.map(renderTranscriptTurn)
                 ) : (
                   <div
                     style={{
@@ -1690,6 +1930,22 @@ function formatSlashCommandStatus(skill: WebAISkill): string {
     return "Zotero MCP selected. Send to load zotero-mcp tools; the web model can request real tool calls.";
   }
   return `Skill /${skill.slashCommand} selected. Write your question and send.`;
+}
+
+function buildRecordUserPrompt(
+  rawMessage: string,
+  resolvedMessage: string,
+  skill: WebAISkill | null,
+): string {
+  const raw = normalizeCapturedText(rawMessage);
+  if (raw.startsWith("/")) {
+    return raw;
+  }
+  const message = normalizeCapturedText(resolvedMessage);
+  if (skill && skill.kind !== "new") {
+    return message ? `/${skill.slashCommand} ${message}` : `/${skill.slashCommand}`;
+  }
+  return message || raw;
 }
 
 function filterSlashSkills(skills: WebAISkill[], query: string): WebAISkill[] {
@@ -3315,6 +3571,34 @@ function formatMCPBridgeResultRecordBody(
   ].join("\n");
 }
 
+function formatLatestMCPExecutionContext(
+  records: WebAIExecutionRecord[],
+): string {
+  const latest = records.find(
+    (record) =>
+      !record.hidden &&
+      record.kind === "mcp" &&
+      (record.status === "done" || record.status === "error") &&
+      record.body.trim(),
+  );
+  if (!latest) {
+    return "";
+  }
+  return truncateText(
+    [
+      "Latest Zotero MCP execution result:",
+      "This is the most recent MCP tool output from the Zotero WebAI conversation. Use it as prior local Zotero context when it is relevant to the next answer.",
+      `Status: ${latest.status}`,
+      latest.subtitle ? `Source: ${latest.subtitle}` : "",
+      "",
+      latest.body,
+    ]
+      .filter(Boolean)
+      .join("\n"),
+    MCP_CONTEXT_TEXT_LIMIT,
+  );
+}
+
 function createMCPBridgeToken(): string {
   return `zotero-webai-${Date.now().toString(36)}-${Math.random()
     .toString(36)
@@ -3585,6 +3869,12 @@ function createSessionID(): string {
     .slice(2, 8)}`;
 }
 
+function createTurnID(): string {
+  return `turn-${Date.now().toString(36)}-${Math.random()
+    .toString(36)
+    .slice(2, 8)}`;
+}
+
 function createChatSession({
   records,
   serviceID,
@@ -3726,6 +4016,9 @@ function normalizeExecutionRecord(value: unknown): WebAIExecutionRecord | null {
     subtitle: typeof source.subtitle === "string" ? source.subtitle : undefined,
     thinking: typeof source.thinking === "string" ? source.thinking : undefined,
     title: source.title,
+    turnID: typeof source.turnID === "string" ? source.turnID : undefined,
+    userPrompt:
+      typeof source.userPrompt === "string" ? source.userPrompt : undefined,
   };
 }
 
@@ -3833,6 +4126,48 @@ function clampSessionRecords(
   return records.slice(0, SESSION_RECORD_LIMIT);
 }
 
+function buildTranscriptTurns(
+  records: WebAIExecutionRecord[],
+): WebAITranscriptTurn[] {
+  const turns: WebAITranscriptTurn[] = [];
+  const turnByID = new Map<string, WebAITranscriptTurn>();
+  for (const record of [...records].reverse()) {
+    const turnID = getRecordTurnKey(record);
+    const existing = turnByID.get(turnID);
+    if (existing) {
+      existing.records.push(record);
+      continue;
+    }
+    const turn = {
+      id: turnID,
+      records: [record],
+    };
+    turnByID.set(turnID, turn);
+    turns.push(turn);
+  }
+  return turns;
+}
+
+function getRecordTurnKey(record: WebAIExecutionRecord): string {
+  if (record.turnID?.trim()) {
+    return record.turnID.trim();
+  }
+  const prompt = formatRecordSourceForChat(record);
+  return prompt
+    ? `prompt-${stableHash(prompt)}`
+    : `record-${record.id || stableHash(record.title + record.createdAt)}`;
+}
+
+function clampVersionIndex(index: number, length: number): number {
+  if (length <= 0) {
+    return 0;
+  }
+  if (!Number.isFinite(index)) {
+    return length - 1;
+  }
+  return Math.max(0, Math.min(length - 1, index));
+}
+
 function buildSessionTitle(
   records: WebAIExecutionRecord[],
   serviceLabel: string,
@@ -3852,8 +4187,16 @@ function buildSessionTitle(
 }
 
 function formatRecordSourceForChat(record: WebAIExecutionRecord): string {
+  const explicitPrompt = normalizeCapturedText(record.userPrompt || "");
+  if (explicitPrompt) {
+    return truncateTextForDisplay(explicitPrompt, 1200);
+  }
+
   const source = normalizeCapturedText(record.sourcePrompt || "");
   if (!source) {
+    return "";
+  }
+  if (record.kind === "mcp" && /ZOTERO_WEBAI_MCP_REQUEST/i.test(source)) {
     return "";
   }
 
@@ -5932,6 +6275,19 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "normal",
     wordBreak: "break-word",
   },
+  userEditInput: {
+    border: "1px solid #c9c9c9",
+    borderRadius: "8px",
+    boxSizing: "border-box",
+    font: "inherit",
+    fontSize: typography.body,
+    lineHeight: 1.55,
+    minHeight: "92px",
+    outline: "none",
+    padding: "8px 10px",
+    resize: "vertical",
+    width: "100%",
+  },
   assistantTitleLine: {
     alignItems: "center",
     display: "flex",
@@ -6146,6 +6502,20 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "6px",
     justifyContent: "flex-start",
     marginTop: "12px",
+  },
+  versionPager: {
+    alignItems: "center",
+    display: "flex",
+    flexWrap: "wrap",
+    gap: "6px",
+    justifyContent: "flex-end",
+    marginTop: "10px",
+  },
+  versionLabel: {
+    fontSize: typography.meta,
+    fontWeight: 600,
+    lineHeight: 1.3,
+    padding: "2px 4px",
   },
   inlineActionButton: {
     appearance: "none",
