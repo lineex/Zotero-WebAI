@@ -2,7 +2,6 @@ import React, { useEffect, useMemo, useRef, useState } from "react";
 import type { AssembledContext } from "../../services/contextAssembler";
 import {
   callMCPToolDetailed,
-  callMCPToolDetailedWithFallback,
   listMCPTools,
   type MCPToolDetailedCallOutcome,
   type MCPToolDetailedResult,
@@ -19,6 +18,7 @@ import { typography } from "../typography";
 
 type WebAIServiceId = "deepseek" | "zai";
 type PromptSourceMode = "paper" | "selection";
+type WebAICommandKind = "mcp" | "pdf" | "skill" | "web";
 
 interface WebAIService {
   id: WebAIServiceId;
@@ -45,7 +45,9 @@ interface WebAIWorkspaceProps {
 }
 
 interface WebAISkill {
+  description?: string;
   id: string;
+  kind: WebAICommandKind;
   label: string;
   promptPrefix: string;
   slashCommand: string;
@@ -63,7 +65,13 @@ interface MCPPromptContextResult {
   status: string | null;
 }
 
-type WebAIExecutionKind = "assistant" | "mcp" | "skill" | "web" | "error";
+type WebAIExecutionKind =
+  | "assistant"
+  | "mcp"
+  | "pdf"
+  | "skill"
+  | "web"
+  | "error";
 
 interface WebAIExecutionRecord {
   body: string;
@@ -136,7 +144,6 @@ const MCP_CONTEXT_TEXT_LIMIT = 12000;
 const MCP_ITEM_TEXT_LIMIT = 1800;
 const MCP_SCHEMA_TEXT_LIMIT = 2200;
 const MCP_TOOL_CATALOG_TEXT_LIMIT = 52000;
-const MCP_QUERY_TEXT_LIMIT = 3000;
 const MCP_BRIDGE_SCAN_TEXT_LIMIT = 120000;
 const MCP_BRIDGE_POLL_MS = 900;
 const EXECUTION_RECORD_LIMIT = 24;
@@ -155,6 +162,30 @@ const SERVICES: WebAIService[] = [
     url: "https://chat.z.ai/",
   },
 ];
+const ZOTERO_MCP_COMMAND: WebAISkill = {
+  description: "Load zotero-mcp tools for this conversation",
+  id: "zotero-mcp",
+  kind: "mcp",
+  label: "Zotero MCP",
+  promptPrefix: "",
+  slashCommand: "zotero-mcp",
+};
+const CURRENT_PDF_COMMAND: WebAISkill = {
+  description: "Attach current PDF or item full text to this prompt",
+  id: "current-pdf",
+  kind: "pdf",
+  label: "Current PDF",
+  promptPrefix: "",
+  slashCommand: "pdf",
+};
+const WEB_SEARCH_COMMAND: WebAISkill = {
+  description: "Search the web and attach results to this prompt",
+  id: "web-search",
+  kind: "web",
+  label: "Web Search",
+  promptPrefix: "",
+  slashCommand: "websearch",
+};
 
 export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   contextSummary,
@@ -199,20 +230,24 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     () => buildCustomSkills(customPresets),
     [customPresets],
   );
+  const slashCommands = useMemo(
+    () => [CURRENT_PDF_COMMAND, WEB_SEARCH_COMMAND, ZOTERO_MCP_COMMAND, ...customSkills],
+    [customSkills],
+  );
   const selectedSkill =
-    customSkills.find((skill) => skill.id === selectedSkillID) || null;
+    slashCommands.find((skill) => skill.id === selectedSkillID) || null;
   const slashQuery = getSlashQuery(message);
   const slashSuggestions = slashQuery
-    ? filterSlashSkills(customSkills, slashQuery.query)
+    ? filterSlashSkills(slashCommands, slashQuery.query)
     : [];
   const showSlashMenu = Boolean(slashQuery && slashSuggestions.length > 0);
   const isZAILoginMode = service.id === "zai" && zaiLoginMode;
 
   useEffect(() => {
-    if (selectedSkillID && !customSkills.some((skill) => skill.id === selectedSkillID)) {
+    if (selectedSkillID && !slashCommands.some((skill) => skill.id === selectedSkillID)) {
       setSelectedSkillID(null);
     }
-  }, [customSkills, selectedSkillID]);
+  }, [selectedSkillID, slashCommands]);
 
   useEffect(() => {
     const host = frameHostRef.current;
@@ -421,6 +456,36 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       setIsError(false);
       return;
     }
+    if (record.kind === "pdf") {
+      const reusablePrompt =
+        record.sourcePrompt?.includes(
+          `Command: /${CURRENT_PDF_COMMAND.slashCommand}`,
+        ) && record.sourcePrompt.includes("Paper content:")
+          ? record.sourcePrompt
+          : "";
+      if (!reusablePrompt && !contextSummary?.fullText?.trim()) {
+        throw new Error(
+          contextSummary?.blockingMessage ||
+            "Current PDF or Zotero item full text is unavailable.",
+        );
+      }
+      const prompt =
+        reusablePrompt ||
+        buildWorkspacePrompt({
+          contextSummary,
+          includeFullText: true,
+          mcpContext: "",
+          message: record.sourcePrompt || "",
+          scope,
+          selectedSkill: CURRENT_PDF_COMMAND,
+          webContext: "",
+        });
+      await deliverPrompt(prompt, `Regenerating ${record.title}.`, {
+        ...buildPDFReplyRecordOptions(service.label),
+        sourcePrompt: prompt,
+      });
+      return;
+    }
 
     const prompt =
       record.sourcePrompt && record.kind !== "skill"
@@ -451,7 +516,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     }
     recordAssistantReply(
       captured,
-      selectedSkill ? buildSkillReplyRecordOptions(selectedSkill, service.label) : {},
+      buildCommandReplyRecordOptions(selectedSkill, service.label),
     );
     setStatus(`Captured latest ${service.label} answer into Zotero WebAI.`);
     setIsError(false);
@@ -472,7 +537,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const chooseSkill = (skill: WebAISkill) => {
     setSelectedSkillID(skill.id);
     setMessage(removeSlashToken(message).trimStart());
-    setStatus(`Skill /${skill.slashCommand} selected. Write your question and send.`);
+    setStatus(formatSlashCommandStatus(skill));
     setIsError(false);
   };
 
@@ -516,12 +581,15 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
   const sendPrompt = async () => {
     const draftMessage = message;
-    const resolved = resolveSkillFromMessage(draftMessage, customSkills, selectedSkill);
+    const resolved = resolveSkillFromMessage(draftMessage, slashCommands, selectedSkill);
     if (!resolved.skill && !resolved.message.trim()) {
-      throw new Error("Write a message or choose a custom skill with /.");
+      throw new Error("Write a message or choose a / command.");
     }
     setMessage("");
     setSelectedSkillID(null);
+    const isMCPCommand = resolved.skill?.kind === "mcp";
+    const isPDFCommand = resolved.skill?.kind === "pdf";
+    const isWebSearchCommand = resolved.skill?.kind === "web";
 
     const promptInput = {
       contextSummary,
@@ -529,7 +597,28 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       scope,
       selectedSkill: resolved.skill,
     };
-    if (resolved.skill) {
+    if (isPDFCommand) {
+      const pdfTextLength = contextSummary?.fullText?.trim().length || 0;
+      appendExecutionRecord({
+        body: formatPDFCommandExecutionBody({
+          contextSummary,
+          message: resolved.message,
+          scope,
+        }),
+        kind: "pdf",
+        sourcePrompt: resolved.message,
+        status: pdfTextLength ? "done" : "error",
+        subtitle: `/${CURRENT_PDF_COMMAND.slashCommand}`,
+        title: "Current PDF command",
+      });
+      if (!pdfTextLength) {
+        throw new Error(
+          contextSummary?.blockingMessage ||
+            "Current PDF or Zotero item full text is unavailable.",
+        );
+      }
+    }
+    if (resolved.skill?.kind === "skill") {
       appendExecutionRecord({
         body: formatSkillExecutionBody({
           contextSummary,
@@ -544,11 +633,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         title: `Skill: ${resolved.skill.label}`,
       });
     }
-    const mcpBridgeToken = shouldUseMCPInConversation(settings)
+    const mcpBridgeToken = isMCPCommand && shouldUseMCPInConversation(settings)
       ? createMCPBridgeToken()
       : "";
     const shouldUseWebSearch =
-      webSearchEnabled || shouldAutoUseWebSearch(resolved.message);
+      isWebSearchCommand || webSearchEnabled || shouldAutoUseWebSearch(resolved.message);
     const webContext = shouldUseWebSearch
       ? await fetchWebSearchContextForConversation({
           appendExecutionRecord,
@@ -556,17 +645,36 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           setStatus,
         })
       : { contextText: "", query: "", status: null };
-    const mcpContext = await fetchMCPContextForConversation(settings, {
-      appendExecutionRecord,
-      ...promptInput,
-      mcpBridgeToken,
-      setStatus,
-    });
+    const mcpContext = isMCPCommand
+      ? await fetchMCPContextForConversation(settings, {
+          mcpBridgeToken,
+          setStatus,
+        })
+      : { contextText: "", status: null };
+    if (isMCPCommand) {
+      appendExecutionRecord({
+        body: formatMCPCommandExecutionBody({
+          message: resolved.message,
+          status: mcpContext.status,
+        }),
+        kind: "mcp",
+        sourcePrompt: resolved.message,
+        status: mcpContext.contextText ? "done" : "error",
+        subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand}`,
+        title: "Zotero MCP command",
+      });
+      if (!mcpContext.contextText) {
+        throw new Error(
+          mcpContext.status || "MCP unavailable; check that zotero-mcp is running.",
+        );
+      }
+    }
     if (mcpBridgeToken && mcpContext.contextText) {
       activeMCPBridgeTokensRef.current.add(mcpBridgeToken);
     }
     const prompt = buildWorkspacePrompt({
       ...promptInput,
+      includeFullText: isPDFCommand,
       mcpContext: mcpContext.contextText,
       webContext: webContext.contextText,
     });
@@ -574,9 +682,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       prompt,
       [webContext.status, mcpContext.status].filter(Boolean).join(" ") || null,
       {
-        ...(resolved.skill
-          ? buildSkillReplyRecordOptions(resolved.skill, service.label)
-          : {}),
+        ...buildCommandReplyRecordOptions(resolved.skill, service.label),
         sourcePrompt: prompt,
       },
     );
@@ -941,11 +1047,13 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                           background:
                             record.kind === "mcp"
                               ? theme.accentBackground
-                              : record.kind === "skill"
+                              : record.kind === "pdf"
                                 ? theme.badgeBackground
-                                : record.kind === "web"
-                                  ? theme.noticeBackground
-                                  : theme.surfaceBackground,
+                                : record.kind === "skill"
+                                  ? theme.badgeBackground
+                                  : record.kind === "web"
+                                    ? theme.noticeBackground
+                                    : theme.surfaceBackground,
                           borderColor: theme.buttonBorder,
                           color:
                             record.status === "error"
@@ -1068,7 +1176,19 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 onClick={() => chooseSkill(skill)}
                 type="button"
               >
-                <span style={styles.skillOptionTitle}>{skill.label}</span>
+                <span style={styles.skillOptionText}>
+                  <span style={styles.skillOptionTitle}>{skill.label}</span>
+                  {skill.description && (
+                    <span
+                      style={{
+                        ...styles.skillOptionDescription,
+                        color: theme.mutedText,
+                      }}
+                    >
+                      {skill.description}
+                    </span>
+                  )}
+                </span>
                 <span style={{ ...styles.skillOptionCommand, color: theme.mutedText }}>
                   /{skill.slashCommand}
                 </span>
@@ -1086,7 +1206,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               color: theme.badgeText,
             }}
             onClick={() => setSelectedSkillID(null)}
-            title="Clear selected skill"
+            title="Clear selected command"
             type="button"
           >
             /{selectedSkill.slashCommand} {selectedSkill.label}
@@ -1096,7 +1216,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         <textarea
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="输入消息，或输入 / 选择自定义 Skill"
+          placeholder="Message, or type / for PDF, Web Search, Zotero MCP, Skills"
           style={{
             ...styles.composerInput,
             background: "transparent",
@@ -1114,7 +1234,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           >
             {customSkills.length
               ? status
-              : "Open settings to add custom skills, then type / here."}
+              : "Type / for PDF, Web Search, Zotero MCP, or custom skills."}
           </div>
           <button
             style={{
@@ -1142,7 +1262,9 @@ function buildCustomSkills(customPresetsValue: string): WebAISkill[] {
     .map((preset) => {
       const label = String(preset.label || preset.id).trim();
       return {
+        description: String(preset.description || "").trim(),
         id: preset.id,
+        kind: "skill",
         label,
         promptPrefix: String(preset.promptPrefix || "").trim(),
         slashCommand: normalizeSlashCommand(
@@ -1152,20 +1274,33 @@ function buildCustomSkills(customPresetsValue: string): WebAISkill[] {
     });
 }
 
+function formatSlashCommandStatus(skill: WebAISkill): string {
+  if (skill.kind === "pdf") {
+    return "Current PDF selected. Send to attach the current PDF/item full text to this prompt.";
+  }
+  if (skill.kind === "web") {
+    return "Web Search selected. Send to search the web and attach the results.";
+  }
+  if (skill.kind === "mcp") {
+    return "Zotero MCP selected. Send to load zotero-mcp tools; the web model can request real tool calls.";
+  }
+  return `Skill /${skill.slashCommand} selected. Write your question and send.`;
+}
+
 function filterSlashSkills(skills: WebAISkill[], query: string): WebAISkill[] {
   const normalized = normalizeSlashCommand(query).toLowerCase();
   if (!normalized) {
-    return skills.slice(0, 8);
+    return skills.slice(0, 1000);
   }
 
   return skills
     .filter((skill) =>
-      [skill.label, skill.slashCommand, skill.id]
+      [skill.label, skill.slashCommand, skill.id, skill.description || ""]
         .join(" ")
         .toLowerCase()
         .includes(normalized),
     )
-    .slice(0, 8);
+    .slice(0, 1000);
 }
 
 function getSlashQuery(value: string): { query: string } | null {
@@ -2062,110 +2197,41 @@ function createMCPBridgeToken(): string {
 async function fetchMCPContextForConversation(
   settings: Settings,
   {
-    appendExecutionRecord,
-    contextSummary,
     mcpBridgeToken,
-    message,
-    scope,
-    selectedSkill,
     setStatus,
   }: {
-    appendExecutionRecord: (draft: WebAIExecutionRecordDraft) => string;
-    contextSummary: AssembledContext | null;
     mcpBridgeToken: string;
-    message: string;
-    scope: ScopeContext | null;
-    selectedSkill: WebAISkill | null;
     setStatus: (status: string) => void;
   },
 ): Promise<MCPPromptContextResult> {
   if (!shouldUseMCPInConversation(settings)) {
-    return { contextText: "", status: null };
+    return {
+      contextText: "",
+      status: "MCP endpoint is not configured.",
+    };
   }
 
   try {
-    setStatus("Loading Zotero MCP tools for the web model...");
+    setStatus("Loading zotero-mcp tools for this / command...");
     const tools = await listMCPTools(settings);
     const planningContext = buildMCPPlanningContext(tools, mcpBridgeToken);
-    const query = buildMCPConversationQuery({
-      contextSummary,
-      message,
-      scope,
-      selectedSkill,
-    });
-    if (!query) {
-      return {
-        contextText: planningContext,
-        status: tools.length
-          ? `MCP tool schema embedded (${tools.length} tools).`
-          : "MCP returned no tool schema.",
-      };
-    }
-
-    try {
-      setStatus("Fetching initial Zotero MCP context for this conversation...");
-      const outcome = await callMCPToolDetailedWithFallback(settings, query, tools);
-      appendExecutionRecord({
-        body: formatMCPDetailedRecordBody(outcome, {
-          usedFallback: outcome.usedFallback,
-        }),
-        kind: "mcp",
-        status: "done",
-        subtitle: outcome.usedFallback ? "automatic fallback" : "automatic context",
-        title: `MCP context: ${outcome.toolName}`,
-      });
-      const contextText = formatMCPPromptContext(outcome.results, outcome);
-      return {
-        contextText: [planningContext, contextText].filter(Boolean).join("\n\n"),
-        status: contextText
-          ? `MCP tool schema embedded; initial context added from ${outcome.toolName}.`
-          : `MCP tool schema embedded (${tools.length} tools).`,
-      };
-    } catch (error) {
-      ztoolkit.log("MCP initial context unavailable for Web AI prompt:", error);
-      return {
-        contextText: planningContext,
-        status: `MCP tool schema embedded (${tools.length} tools); no initial context.`,
-      };
-    }
+    return {
+      contextText: planningContext,
+      status: tools.length
+        ? `MCP tool schema loaded (${tools.length} tools).`
+        : "MCP returned no tool schema.",
+    };
   } catch (error) {
     ztoolkit.log("MCP tool schema unavailable for Web AI prompt:", error);
     return {
       contextText: "",
-      status: "MCP unavailable; using Zotero context only.",
+      status: "MCP unavailable; check that zotero-mcp is running.",
     };
   }
 }
 
 function shouldUseMCPInConversation(settings: Settings): boolean {
-  return Boolean(
-    settings.evidenceProviderMode === "mcp-http" &&
-      settings.mcpEndpoint?.trim(),
-  );
-}
-
-function buildMCPConversationQuery({
-  contextSummary,
-  message,
-  scope,
-  selectedSkill,
-}: {
-  contextSummary: AssembledContext | null;
-  message: string;
-  scope: ScopeContext | null;
-  selectedSkill: WebAISkill | null;
-}): string {
-  const selectedText =
-    scope?.selectedText?.trim() || contextSummary?.selectedText?.trim() || "";
-  const parts = [
-    selectedSkill ? `Skill: ${selectedSkill.label}` : "",
-    message.trim() ? `User message: ${message.trim()}` : "",
-    scope?.label ? `Zotero context: ${scope.label}` : "",
-    contextSummary?.metadata ? `Metadata:\n${contextSummary.metadata}` : "",
-    selectedText ? `Selected passage:\n${selectedText}` : "",
-  ];
-  const query = parts.filter(Boolean).join("\n\n").trim();
-  return truncateText(query, MCP_QUERY_TEXT_LIMIT);
+  return Boolean(settings.mcpEndpoint?.trim());
 }
 
 function buildMCPPlanningContext(
@@ -2175,7 +2241,7 @@ function buildMCPPlanningContext(
   const catalog = formatMCPToolCatalog(tools);
   return [
     "Zotero MCP bridge:",
-    "Zotero WebAI can run local Zotero MCP tools for you. The user does not type MCP commands; you decide whether a tool is needed and choose schema-valid arguments.",
+    "The user explicitly selected /zotero-mcp. Zotero WebAI can run local zotero-mcp tools for this conversation; decide whether a tool is needed and choose schema-valid arguments.",
     "If Zotero MCP is needed, do not invent the tool result. Reply only with an MCP request block using the markers named below. Zotero WebAI will execute it and insert the result back into this chat.",
     "Start marker: ZOTERO_WEBAI_MCP_REQUEST",
     "End marker: END_ZOTERO_WEBAI_MCP_REQUEST",
@@ -2259,6 +2325,7 @@ function formatMCPPromptItem(
 
 function buildWorkspacePrompt({
   contextSummary,
+  includeFullText,
   mcpContext,
   message,
   scope,
@@ -2266,6 +2333,7 @@ function buildWorkspacePrompt({
   webContext,
 }: {
   contextSummary: AssembledContext | null;
+  includeFullText: boolean;
   mcpContext: string;
   message: string;
   scope: ScopeContext | null;
@@ -2281,12 +2349,24 @@ function buildWorkspacePrompt({
   const metadata = contextSummary?.metadata || "";
   const selectedText =
     scope?.selectedText?.trim() || contextSummary?.selectedText?.trim() || "";
-  const fullText = truncateText(contextSummary?.fullText || "", PROMPT_TEXT_LIMIT);
+  const fullText = includeFullText
+    ? truncateText(contextSummary?.fullText || "", PROMPT_TEXT_LIMIT)
+    : "";
+  const commandInstruction = formatCommandPromptInstruction(
+    selectedSkill,
+    includeFullText,
+  );
+  const fallbackInstruction =
+    !instruction && selectedSkill?.kind === "pdf"
+      ? "Summarize the current PDF, extract the key findings, methods, limitations, and useful notes for Zotero."
+      : !instruction && selectedSkill?.kind === "web"
+        ? "Use the web search context to answer with concise citations."
+        : "";
   const parts = [
-    selectedSkill
-      ? `Skill: ${selectedSkill.label}\n${selectedSkill.promptPrefix}`
+    commandInstruction,
+    instruction || fallbackInstruction
+      ? `User message:\n${instruction || fallbackInstruction}`
       : "",
-    instruction ? `User message:\n${instruction}` : "",
     `Zotero context:\n${title}`,
     metadata ? `Metadata:\n${metadata}` : "",
     selectedText ? `Selected passage:\n${selectedText}` : "",
@@ -2295,13 +2375,47 @@ function buildWorkspacePrompt({
     mcpContext,
   ];
 
-  if (contextSummary?.fullText && contextSummary.fullText.length > fullText.length) {
+  if (
+    includeFullText &&
+    contextSummary?.fullText &&
+    contextSummary.fullText.length > fullText.length
+  ) {
     parts.push(
       "Note: the paper text was truncated by Zotero WebAI; continue from the available excerpt first.",
     );
   }
 
   return parts.filter(Boolean).join("\n\n");
+}
+
+function formatCommandPromptInstruction(
+  selectedSkill: WebAISkill | null,
+  includeFullText: boolean,
+): string {
+  if (!selectedSkill) {
+    return "";
+  }
+  if (selectedSkill.kind === "skill") {
+    return `Skill: ${selectedSkill.label}\n${selectedSkill.promptPrefix}`;
+  }
+  if (selectedSkill.kind === "pdf") {
+    return [
+      `Command: /${selectedSkill.slashCommand}`,
+      includeFullText
+        ? "The user explicitly attached the current Zotero PDF or item full text. Treat the Paper content section as the primary source."
+        : "The user selected the PDF command, but no full text was attached.",
+    ].join("\n");
+  }
+  if (selectedSkill.kind === "web") {
+    return [
+      `Command: /${selectedSkill.slashCommand}`,
+      "The user explicitly requested built-in web search. Use the Web search context below when it is available, cite URLs when relying on it, and separate web context from Zotero context.",
+    ].join("\n");
+  }
+  if (selectedSkill.kind === "mcp") {
+    return `Command: /${selectedSkill.slashCommand}\nUse zotero-mcp only when a real local Zotero tool result is needed. If a tool is needed, request it through the MCP bridge instructions below.`;
+  }
+  return "";
 }
 
 function createExecutionRecord(
@@ -2353,6 +2467,110 @@ function buildSkillReplyRecordOptions(
     subtitle: `/${skill.slashCommand} via ${serviceLabel}`,
     title: `Skill result: ${skill.label}`,
   };
+}
+
+function buildCommandReplyRecordOptions(
+  skill: WebAISkill | null,
+  serviceLabel: string,
+): AssistantReplyRecordOptions {
+  if (!skill) {
+    return {};
+  }
+  if (skill.kind === "skill") {
+    return buildSkillReplyRecordOptions(skill, serviceLabel);
+  }
+  if (skill.kind === "mcp") {
+    return buildMCPReplyRecordOptions(serviceLabel);
+  }
+  if (skill.kind === "pdf") {
+    return buildPDFReplyRecordOptions(serviceLabel);
+  }
+  if (skill.kind === "web") {
+    return {
+      kind: "assistant",
+      subtitle: `/${WEB_SEARCH_COMMAND.slashCommand} via ${serviceLabel}`,
+      title: "Web-search answer",
+    };
+  }
+  return {};
+}
+
+function buildPDFReplyRecordOptions(
+  serviceLabel: string,
+): AssistantReplyRecordOptions {
+  return {
+    kind: "pdf",
+    subtitle: `/${CURRENT_PDF_COMMAND.slashCommand} via ${serviceLabel}`,
+    title: "PDF-assisted answer",
+  };
+}
+
+function buildMCPReplyRecordOptions(
+  serviceLabel: string,
+): AssistantReplyRecordOptions {
+  return {
+    kind: "mcp",
+    subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} via ${serviceLabel}`,
+    title: "MCP-assisted answer",
+  };
+}
+
+function formatMCPCommandExecutionBody({
+  message,
+  status,
+}: {
+  message: string;
+  status: string | null;
+}): string {
+  return [
+    `Command: /${ZOTERO_MCP_COMMAND.slashCommand}`,
+    status ? `Status: ${status}` : "",
+    "",
+    message.trim() ? `User message:\n${message.trim()}` : "",
+    "The web model received the zotero-mcp tool catalog and can request real tools by emitting a ZOTERO_WEBAI_MCP_REQUEST block.",
+  ]
+    .filter(Boolean)
+    .join("\n");
+}
+
+function formatPDFCommandExecutionBody({
+  contextSummary,
+  message,
+  scope,
+}: {
+  contextSummary: AssembledContext | null;
+  message: string;
+  scope: ScopeContext | null;
+}): string {
+  const fullTextLength = contextSummary?.fullText?.trim().length || 0;
+  const attachedLength = Math.min(fullTextLength, PROMPT_TEXT_LIMIT);
+  const selectedText =
+    scope?.selectedText?.trim() || contextSummary?.selectedText?.trim() || "";
+  return [
+    `Command: /${CURRENT_PDF_COMMAND.slashCommand}`,
+    fullTextLength
+      ? `Status: attached ${attachedLength} of ${fullTextLength} characters from the current PDF/item full text.`
+      : "Status: current PDF/item full text unavailable.",
+    contextSummary?.fullTextSource
+      ? `Source: ${contextSummary.fullTextSource}`
+      : "",
+    scope?.label ? `Zotero context: ${scope.label}` : "",
+    message.trim() ? `User message:\n${message.trim()}` : "",
+    selectedText
+      ? `Selected passage:\n${truncateText(selectedText, 2400)}`
+      : "",
+    contextSummary?.blockingMessage
+      ? `Blocking message: ${contextSummary.blockingMessage}`
+      : "",
+    contextSummary?.warnings?.length
+      ? `Warnings:\n${contextSummary.warnings.join("\n")}`
+      : "",
+    fullTextLength > PROMPT_TEXT_LIMIT
+      ? "Note: the paper text will be truncated in the prompt."
+      : "",
+  ]
+    .filter(Boolean)
+    .join("\n\n");
 }
 
 function formatMCPDetailedRecordBody(
@@ -3319,9 +3537,22 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: "left",
     width: "100%",
   },
+  skillOptionText: {
+    display: "flex",
+    flex: "1 1 auto",
+    flexDirection: "column",
+    minWidth: 0,
+  },
   skillOptionTitle: {
     fontSize: typography.body,
     fontWeight: 600,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  skillOptionDescription: {
+    fontSize: typography.meta,
+    lineHeight: 1.25,
     overflow: "hidden",
     textOverflow: "ellipsis",
     whiteSpace: "nowrap",
