@@ -19,7 +19,7 @@ import { typography } from "../typography";
 
 type WebAIServiceId = "deepseek" | "zai";
 type PromptSourceMode = "paper" | "selection";
-type WebAICommandKind = "mcp" | "pdf" | "skill" | "web";
+type WebAICommandKind = "mcp" | "new" | "pdf" | "skill" | "web";
 
 interface WebAIService {
   id: WebAIServiceId;
@@ -46,6 +46,7 @@ interface WebAIWorkspaceProps {
 }
 
 interface WebAISkill {
+  aliases?: string[];
   description?: string;
   id: string;
   kind: WebAICommandKind;
@@ -198,6 +199,15 @@ const ZOTERO_MCP_COMMAND: WebAISkill = {
   promptPrefix: "",
   slashCommand: "zotero-mcp",
 };
+const NEW_CONVERSATION_COMMAND: WebAISkill = {
+  aliases: ["new", "newconversation", "newchat"],
+  description: "Start a clean chat session and reload the web chat",
+  id: "new-conversation",
+  kind: "new",
+  label: "New Conversation",
+  promptPrefix: "",
+  slashCommand: "new conversation",
+};
 const CURRENT_PDF_COMMAND: WebAISkill = {
   description: "Attach current PDF or item full text to this prompt",
   id: "current-pdf",
@@ -334,7 +344,13 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     [customPresets],
   );
   const slashCommands = useMemo(
-    () => [CURRENT_PDF_COMMAND, WEB_SEARCH_COMMAND, ZOTERO_MCP_COMMAND, ...customSkills],
+    () => [
+      NEW_CONVERSATION_COMMAND,
+      CURRENT_PDF_COMMAND,
+      WEB_SEARCH_COMMAND,
+      ZOTERO_MCP_COMMAND,
+      ...customSkills,
+    ],
     [customSkills],
   );
   const selectedSkill =
@@ -545,7 +561,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     statusPrefix?: string | null,
     captureOptions?: AssistantReplyRecordOptions,
   ) => {
-    const baselineText = await readWebChatText(frameRef.current)
+    const baselineText = await readLatestAssistantText(frameRef.current)
       .then((result) => (result.ok ? result.text || "" : ""))
       .catch(() => "");
     copyTextToClipboard(prompt);
@@ -642,7 +658,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   };
 
   const captureAssistantReply = async () => {
-    const result = await readWebChatText(frameRef.current);
+    const result = await readLatestAssistantText(frameRef.current);
     if (!result.ok || !result.text?.trim()) {
       throw new Error(result.reason || "No web chat text available");
     }
@@ -671,6 +687,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   };
 
   const chooseSkill = (skill: WebAISkill) => {
+    if (skill.kind === "new") {
+      startNewConversation();
+      return;
+    }
     setSelectedSkillID(skill.id);
     setMessage(removeSlashToken(message).trimStart());
     setStatus(formatSlashCommandStatus(skill));
@@ -744,6 +764,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     }
 
     const resolved = resolveSkillFromMessage(draftMessage, slashCommands, selectedSkill);
+    if (resolved.skill?.kind === "new") {
+      startNewConversation();
+      return;
+    }
     if (!resolved.skill && !resolved.message.trim()) {
       throw new Error("Write a message or choose a / command.");
     }
@@ -1522,6 +1546,9 @@ function buildCustomSkills(customPresetsValue: string): WebAISkill[] {
 }
 
 function formatSlashCommandStatus(skill: WebAISkill): string {
+  if (skill.kind === "new") {
+    return "Start a new conversation and clear the current web chat context.";
+  }
   if (skill.kind === "pdf") {
     return "Current PDF selected. Send to attach the current PDF/item full text to this prompt.";
   }
@@ -1541,23 +1568,21 @@ function filterSlashSkills(skills: WebAISkill[], query: string): WebAISkill[] {
   }
 
   return skills
-    .filter((skill) =>
-      [skill.label, skill.slashCommand, skill.id, skill.description || ""]
-        .join(" ")
-        .toLowerCase()
-        .includes(normalized),
-    )
+    .filter((skill) => {
+      const tokens = buildSlashSearchTokens(skill);
+      return tokens.some((token) => token.includes(normalized));
+    })
     .slice(0, 1000);
 }
 
 function getSlashQuery(value: string): { query: string } | null {
-  const match = value.match(/^\s*\/([^\s]*)$/);
+  const match = value.match(/^\s*\/([^\r\n]*)$/);
   return match ? { query: match[1] || "" } : null;
 }
 
 function isNewConversationCommand(value: string): boolean {
   const normalized = normalizeSlashCommand(value).toLowerCase();
-  return normalized === "new" || normalized === "newconversation";
+  return ["new", "newconversation", "newchat"].includes(normalized);
 }
 
 function removeSlashToken(value: string): string {
@@ -1577,15 +1602,34 @@ function resolveSkillFromMessage(
   const command = normalizeSlashCommand(match[1] || "");
   const matchedSkill =
     skills.find(
-      (skill) =>
-        skill.slashCommand.toLowerCase() === command.toLowerCase() ||
-        skill.id.toLowerCase() === command.toLowerCase() ||
-        skill.label.toLowerCase() === command.toLowerCase(),
+      (skill) => matchesSlashSkill(skill, command),
     ) || selectedSkill;
   return {
     message: match[2] || "",
     skill: matchedSkill,
   };
+}
+
+function buildSlashSearchTokens(skill: WebAISkill): string[] {
+  const rawTokens = [
+    skill.label,
+    skill.slashCommand,
+    skill.id,
+    skill.description || "",
+    ...(skill.aliases || []),
+  ];
+  return rawTokens.flatMap((token) => {
+    const lower = String(token || "").toLowerCase();
+    const normalized = normalizeSlashCommand(lower).toLowerCase();
+    return normalized && normalized !== lower ? [lower, normalized] : [lower];
+  });
+}
+
+function matchesSlashSkill(skill: WebAISkill, command: string): boolean {
+  const normalizedCommand = normalizeSlashCommand(command).toLowerCase();
+  return buildSlashSearchTokens(skill).some(
+    (token) => normalizeSlashCommand(token).toLowerCase() === normalizedCommand,
+  );
 }
 
 function normalizeSlashCommand(value: string): string {
@@ -1801,6 +1845,21 @@ async function readWebChatText(
   return readWebChatTextWithFrameScript(frame);
 }
 
+async function readLatestAssistantText(
+  frame: Element | null,
+): Promise<WebChatTextResult> {
+  if (!frame) {
+    return { ok: false, reason: "web-frame-missing" };
+  }
+
+  const directResult = readLatestAssistantTextDirectly(frame);
+  if (directResult.ok) {
+    return directResult;
+  }
+
+  return readLatestAssistantTextWithFrameScript(frame);
+}
+
 function readWebChatTextDirectly(frame: Element): WebChatTextResult {
   try {
     const doc = (frame as HTMLIFrameElement).contentWindow?.document;
@@ -1810,6 +1869,27 @@ function readWebChatTextDirectly(frame: Element): WebChatTextResult {
     return {
       ok: true,
       text: readWebChatTextFromDocument(doc),
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason:
+        error instanceof Error && error.message
+          ? error.message
+          : "direct-dom-unavailable",
+    };
+  }
+}
+
+function readLatestAssistantTextDirectly(frame: Element): WebChatTextResult {
+  try {
+    const doc = (frame as HTMLIFrameElement).contentWindow?.document;
+    if (!doc) {
+      return { ok: false, reason: "content-document-missing" };
+    }
+    return {
+      ok: true,
+      text: readLatestAssistantTextFromDocument(doc),
     };
   } catch (error) {
     return {
@@ -1840,6 +1920,77 @@ function readWebChatTextWithFrameScript(
     .toString(36)
     .slice(2)}`;
   const source = buildWebChatTextFrameScript(messageName);
+
+  return new Promise((resolve) => {
+    const timerHost = resolveTimerHost();
+    let settled = false;
+    const cleanup = () => {
+      if (settled) {
+        return;
+      }
+      settled = true;
+      try {
+        removeMessageListener?.call(messageManager, messageName, listener);
+      } catch {
+        // The frame may have navigated while the script was running.
+      }
+    };
+    const listener = (message: { data?: PromptInsertResult | WebChatTextResult }) => {
+      const data = (message.data || {
+        ok: false,
+        reason: "empty-frame-result",
+      }) as WebChatTextResult;
+      cleanup();
+      resolve(data);
+    };
+    const timeoutId = timerHost.setTimeout(() => {
+      cleanup();
+      resolve({ ok: false, reason: "frame-script-timeout" });
+    }, 1500);
+
+    const finish = (result: WebChatTextResult) => {
+      timerHost.clearTimeout(timeoutId);
+      cleanup();
+      resolve(result);
+    };
+
+    try {
+      addMessageListener.call(messageManager, messageName, listener);
+      loadFrameScript.call(
+        messageManager,
+        `data:application/javascript;charset=utf-8,${encodeURIComponent(source)}`,
+        false,
+      );
+    } catch (error) {
+      finish({
+        ok: false,
+        reason:
+          error instanceof Error && error.message
+            ? error.message
+            : "frame-script-error",
+      });
+    }
+  });
+}
+
+function readLatestAssistantTextWithFrameScript(
+  frame: Element,
+): Promise<WebChatTextResult> {
+  const messageManager = getFrameMessageManager(frame);
+  const addMessageListener = messageManager?.addMessageListener;
+  const loadFrameScript = messageManager?.loadFrameScript;
+  const removeMessageListener = messageManager?.removeMessageListener;
+  if (
+    typeof addMessageListener !== "function" ||
+    typeof loadFrameScript !== "function"
+  ) {
+    return Promise.resolve({ ok: false, reason: "frame-script-unavailable" });
+  }
+
+  const messageName = `ZoteroWebAI:LatestAssistant:${Date.now()}:${Math.random()
+    .toString(36)
+    .slice(2)}`;
+  const source = buildLatestAssistantTextFrameScript(messageName);
 
   return new Promise((resolve) => {
     const timerHost = resolveTimerHost();
@@ -1991,6 +2142,26 @@ function buildWebChatTextFrameScript(messageName: string): string {
 })();`;
 }
 
+function buildLatestAssistantTextFrameScript(messageName: string): string {
+  return `
+(function () {
+  const messageName = ${JSON.stringify(messageName)};
+  const MCP_BRIDGE_SCAN_TEXT_LIMIT = ${MCP_BRIDGE_SCAN_TEXT_LIMIT};
+  ${readLatestAssistantTextFromDocument.toString()}
+  try {
+    sendAsyncMessage(messageName, {
+      ok: true,
+      text: readLatestAssistantTextFromDocument(content.document)
+    });
+  } catch (error) {
+    sendAsyncMessage(messageName, {
+      ok: false,
+      reason: error && error.message ? error.message : "frame-script-exception"
+    });
+  }
+})();`;
+}
+
 function insertPromptIntoDocument(
   doc: Document,
   prompt: string,
@@ -2017,6 +2188,164 @@ function readWebChatTextFromDocument(doc: Document): string {
       ? (root as HTMLElement).innerText
       : root?.textContent || "";
   return text.slice(-MCP_BRIDGE_SCAN_TEXT_LIMIT);
+}
+
+function readLatestAssistantTextFromDocument(doc: Document): string {
+  const scanLimit = MCP_BRIDGE_SCAN_TEXT_LIMIT;
+  const root =
+    doc.querySelector("main") ||
+    doc.querySelector('[role="main"]') ||
+    doc.body ||
+    doc.documentElement;
+  if (!root) {
+    return "";
+  }
+
+  const normalizeText = (value: string) =>
+    String(value || "")
+      .replace(/\r\n?/g, "\n")
+      .replace(/\u00a0/g, " ")
+      .replace(/[ \t]+\n/g, "\n")
+      .replace(/\n{3,}/g, "\n\n")
+      .trim();
+
+  const getElementText = (element: Element) => {
+    const raw =
+      "innerText" in element
+        ? String((element as HTMLElement).innerText || "")
+        : String(element.textContent || "");
+    const noiseLinePattern =
+      /^(copy|copied|share|regenerate|retry|stop generating|continue|edit|delete|like|dislike|复制|已复制|分享|重新生成|停止生成|继续生成|编辑|删除|赞|踩)$/i;
+    return normalizeText(raw)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !noiseLinePattern.test(line))
+      .join("\n")
+      .trim();
+  };
+
+  const isVisible = (element: Element) => {
+    const htmlElement = element as HTMLElement;
+    const rect = htmlElement.getBoundingClientRect?.();
+    const style = doc.defaultView?.getComputedStyle?.(htmlElement);
+    return Boolean(
+      rect &&
+        rect.width > 8 &&
+        rect.height > 8 &&
+        style?.display !== "none" &&
+        style?.visibility !== "hidden" &&
+        style?.opacity !== "0" &&
+        !htmlElement.hidden &&
+        !htmlElement.closest?.(
+          "textarea,input,button,select,option,nav,header,footer,aside,form,[role='textbox'],[aria-hidden='true'],[hidden]",
+        ),
+    );
+  };
+
+  const candidateSelectors = [
+    "[data-message-author-role='assistant']",
+    "[data-role='assistant']",
+    "[data-author='assistant']",
+    "[data-from='assistant']",
+    "[data-testid*='assistant']",
+    "[data-testid*='answer']",
+    "[data-testid*='message']",
+    "[class*='assistant']",
+    "[class*='Assistant']",
+    "[class*='answer']",
+    "[class*='Answer']",
+    "[class*='response']",
+    "[class*='Response']",
+    "[class*='message']",
+    "[class*='Message']",
+    "[class*='markdown']",
+    "[class*='Markdown']",
+    "[class*='prose']",
+    "[class*='ds-markdown']",
+    "[role='article']",
+    "article",
+  ];
+
+  const candidates = new Set<Element>();
+  for (const selector of candidateSelectors) {
+    try {
+      root
+        .querySelectorAll(selector)
+        .forEach((node: Element) => candidates.add(node));
+    } catch {
+      // Some embedded pages do not support every selector variant.
+    }
+  }
+
+  const scoreCandidate = (element: Element, text: string) => {
+    if (!isVisible(element) || text.length < 2) {
+      return Number.NEGATIVE_INFINITY;
+    }
+
+    const htmlElement = element as HTMLElement;
+    const rect = htmlElement.getBoundingClientRect();
+    const descriptor = [
+      element.tagName,
+      element.id,
+      element.className,
+      element.getAttribute("role"),
+      element.getAttribute("data-role"),
+      element.getAttribute("data-author"),
+      element.getAttribute("data-message-author-role"),
+      element.getAttribute("data-testid"),
+      element.getAttribute("aria-label"),
+    ]
+      .join(" ")
+      .toLowerCase();
+    let score = rect.bottom * 10 + Math.min(text.length, 4000);
+
+    if (/assistant|answer|response|bot|ai|markdown|prose|ds-markdown/.test(descriptor)) {
+      score += 8000;
+    }
+    if (/message|article|conversation|chat/.test(descriptor)) {
+      score += 1200;
+    }
+    if (/user|human|prompt|question|composer|input|textarea|toolbar|sidebar|nav|menu/.test(descriptor)) {
+      score -= 10000;
+    }
+    if (text.length > 20000 && !/assistant|answer|response|markdown/.test(descriptor)) {
+      score -= 12000;
+    }
+    if ((element.querySelectorAll("button,input,textarea,[contenteditable='true']").length || 0) > 4) {
+      score -= 2500;
+    }
+
+    return score;
+  };
+
+  const ranked = Array.from(candidates)
+    .map((element, index) => {
+      const text = getElementText(element);
+      return {
+        element,
+        index,
+        score: scoreCandidate(element, text),
+        text,
+      };
+    })
+    .filter((candidate) => Number.isFinite(candidate.score) && candidate.text)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+      return right.index - left.index;
+    });
+
+  const best = ranked[0]?.text || "";
+  if (best) {
+    return best.slice(-scanLimit);
+  }
+
+  const fallbackText =
+    "innerText" in root
+      ? String((root as HTMLElement).innerText || "")
+      : String(root.textContent || "");
+  return normalizeText(fallbackText).slice(-scanLimit);
 }
 
 function findWebChatComposer(doc: Document): HTMLElement | null {
@@ -4246,7 +4575,7 @@ async function waitForStableAssistantText(
       return "";
     }
     await sleepWithHostTimer(attempt < 2 ? 1000 : 1500);
-    const result = await readWebChatText(frame);
+    const result = await readLatestAssistantText(frame);
     if (!result.ok || !result.text) {
       continue;
     }
@@ -4258,7 +4587,7 @@ async function waitForStableAssistantText(
     if (
       !candidate.body ||
       candidate.body === baseline ||
-      candidate.body.length < 8 ||
+      candidate.body.trim().length < 1 ||
       looksLikeInternalBridgeOutput(candidate.body)
     ) {
       continue;

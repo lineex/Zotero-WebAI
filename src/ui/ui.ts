@@ -48,6 +48,8 @@ const TAB_BAR_ACTION_HOST_ID = "zotero-webai-tabbar-actions";
 const TAB_BAR_ACTION_HOST_CLASS = "zotero-webai-tabbar-actions";
 const TAB_BAR_BUTTON_ID = "zotero-webai-tabbar-button";
 const TAB_BAR_BUTTON_CLASS = "zotero-webai-tabbar-button";
+const FOCUS_MODE_CLASS = "zotero-webai-focus-mode";
+const FOCUS_SECTION_CLASS = "zotero-webai-focus-section";
 const LEGACY_STANDALONE_ARTIFACT_IDS = [
   "ai-assistant-library-empty-state",
   "ai-assistant-library-empty-state-sidenav-btn",
@@ -114,6 +116,7 @@ export class UIFactory {
     windowRefreshCleanup.delete(win);
     windowSectionRefresh.delete(win);
     this.removeTabBarButton(win);
+    this.clearWebAIFocusMode(win);
     this.removeLegacyStandaloneArtifacts(win);
   }
 
@@ -368,22 +371,30 @@ export class UIFactory {
     const existing = doc.getElementById(
       TAB_BAR_ACTION_HOST_ID,
     ) as HTMLElement | null;
-    if (existing) {
+    const tabBar = this.findTabBarElement(doc);
+    if (!tabBar) {
       return existing;
     }
 
-    const tabBar = this.findTabBarElement(doc);
-    if (!tabBar) {
-      return null;
+    const parent = this.resolveTabBarActionParent(tabBar);
+    this.decorateTabBarActionParent(parent);
+    if (existing) {
+      existing.style.marginInlineStart = "auto";
+      existing.style.order = "2147483647";
+      if (existing.parentElement !== parent && existing !== parent) {
+        parent.appendChild(existing);
+      }
+      return existing;
     }
 
-    const parent = this.resolveTabBarActionParent(tabBar);
     const host = (doc.createXULElement?.("hbox") ??
       doc.createElementNS(HTML_NS, "div")) as HTMLElement;
     host.id = TAB_BAR_ACTION_HOST_ID;
     host.className = TAB_BAR_ACTION_HOST_CLASS;
     host.setAttribute("data-pane-id", SECTION_PANE_ID);
     host.setAttribute("align", "center");
+    host.style.marginInlineStart = "auto";
+    host.style.order = "2147483647";
 
     if (parent === tabBar) {
       tabBar.appendChild(host);
@@ -391,6 +402,17 @@ export class UIFactory {
       parent.appendChild(host);
     }
     return host;
+  }
+
+  private static decorateTabBarActionParent(parent: HTMLElement): void {
+    const computedDisplay = parent.ownerDocument?.defaultView
+      ?.getComputedStyle(parent)
+      ?.display;
+    if (!computedDisplay || computedDisplay === "block") {
+      parent.style.display = "flex";
+    }
+    parent.style.alignItems = parent.style.alignItems || "center";
+    parent.style.minWidth = parent.style.minWidth || "0";
   }
 
   private static resolveTabBarActionParent(tabBar: HTMLElement): HTMLElement {
@@ -414,6 +436,14 @@ export class UIFactory {
     const selectors = [
       "#zotero-tabs-toolbar .zotero-tabs",
       "#zotero-tabs-toolbar [role='tablist']",
+      "#zotero-tabs-toolbar .tabbrowser-tabs",
+      "#zotero-tabs-toolbar .tabs",
+      "#tab-bar-container [role='tablist']",
+      "#tab-bar-container .zotero-tabs",
+      "#tab-bar-container",
+      "#tabs-container [role='tablist']",
+      "#tabs-container .zotero-tabs",
+      "#tabs-container",
       "#zotero-tabs-wrapper",
       "#zotero-tabs-container",
       "#zotero-tabs-toolbar",
@@ -449,7 +479,7 @@ export class UIFactory {
     }
 
     const retries = windowTabBarButtonRetryBudget.get(win) ?? 0;
-    if (retries >= 20) {
+    if (retries >= 80) {
       return;
     }
     windowTabBarButtonRetryBudget.set(win, retries + 1);
@@ -578,8 +608,11 @@ export class UIFactory {
       "zotero-context-pane,#zotero-context-pane,.zotero-context-pane,#zotero-item-pane",
     ) as HTMLElement | null;
     if (paneRoot) {
+      paneRoot.classList.add(FOCUS_MODE_CLASS);
       paneRoot.scrollTop = 0;
     }
+    const section = this.findSectionContainer(mount as unknown as SectionRenderBody);
+    section?.classList.add(FOCUS_SECTION_CLASS);
 
     const scrollContainers = Array.from(
       mount.querySelectorAll(
@@ -596,6 +629,18 @@ export class UIFactory {
     const focusTarget =
       mount.querySelector<HTMLElement>("textarea,button,[tabindex]") || mount;
     focusTarget.focus?.();
+  }
+
+  private static clearWebAIFocusMode(win: Window): void {
+    try {
+      win.document
+        .querySelectorAll(`.${FOCUS_MODE_CLASS},.${FOCUS_SECTION_CLASS}`)
+        .forEach((node: Element) => {
+          node.classList.remove(FOCUS_MODE_CLASS, FOCUS_SECTION_CLASS);
+        });
+    } catch {
+      // Ignore mixed XUL/HTML selector quirks during teardown.
+    }
   }
 
   private static findWebAISectionMount(doc: Document): HTMLElement | null {

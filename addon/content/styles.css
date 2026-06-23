@@ -26,6 +26,15 @@
   padding-inline: 4px 6px;
 }
 
+#zotero-tabs-toolbar .zotero-webai-tabbar-actions,
+#tab-bar-container .zotero-webai-tabbar-actions,
+#tabs-container .zotero-webai-tabbar-actions,
+.zotero-tabs-toolbar .zotero-webai-tabbar-actions,
+.tabs-toolbar .zotero-webai-tabbar-actions {
+  margin-left: auto !important;
+  margin-right: 0 !important;
+}
+
 .zotero-webai-reader-toolbar-button {
   display: none !important;
 }
@@ -70,4 +79,29 @@
   min-height: 360px;
   min-width: 0;
   width: 100%;
+}
+
+.zotero-webai-focus-mode #zotero-context-pane-sidenav,
+.zotero-webai-focus-mode #zotero-item-pane-sidenav,
+.zotero-webai-focus-mode #zotero-view-item-sidenav,
+.zotero-webai-focus-mode .zotero-context-pane-sidenav,
+.zotero-webai-focus-mode .zotero-item-pane-sidenav,
+.zotero-webai-focus-mode > sidenav {
+  display: none !important;
+}
+
+.zotero-webai-focus-mode [data-pane-id]:not([data-pane-id="ai-assistant-sidebar"]):not(.zotero-webai-tabbar-actions),
+.zotero-webai-focus-mode [data-paneid]:not([data-paneid="ai-assistant-sidebar"]),
+.zotero-webai-focus-mode [paneid]:not([paneid="ai-assistant-sidebar"]) {
+  display: none !important;
+}
+
+.zotero-webai-focus-mode .zotero-webai-focus-section,
+.zotero-webai-focus-mode [data-pane-id="ai-assistant-sidebar"],
+.zotero-webai-focus-mode [data-paneid="ai-assistant-sidebar"],
+.zotero-webai-focus-mode [paneid="ai-assistant-sidebar"] {
+  display: flex !important;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
 }
