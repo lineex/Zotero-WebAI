@@ -106,6 +106,7 @@ type WebAIExecutionRecordDraft = Omit<
 
 interface AssistantReplyRecordOptions {
   kind?: WebAIExecutionKind;
+  pendingRecordID?: string;
   sourcePrompt?: string;
   subtitle?: string;
   title?: string;
@@ -250,7 +251,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [message, setMessage] = useState("");
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
   const [historyVisible, setHistoryVisible] = useState(false);
-  const [chatCollapsed, setChatCollapsed] = useState(() => isReaderWorkspace);
+  const [chatCollapsed, setChatCollapsed] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [zaiLoginMode, setZaiLoginMode] = useState(false);
   const [chatSessions, setChatSessions] = useState<WebAIChatSession[]>(() =>
@@ -267,6 +268,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [activeRecordID, setActiveRecordID] = useState<string | null>(
     () => INITIAL_CHAT_SESSIONS[0]?.records.find((record) => !record.hidden)?.id || null,
   );
+  const executionRecordsRef = useRef<WebAIExecutionRecord[]>(executionRecords);
   const frameHostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<Element | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -275,20 +277,61 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const assistantCaptureRunRef = useRef(0);
   const handledMCPRequestsRef = useRef<Set<string>>(new Set());
   const lastCapturedAssistantTextRef = useRef("");
+  const pendingCaptureRecordIDRef = useRef<string | null>(null);
   const theme = getSidebarTheme(hostWindow);
 
   const appendExecutionRecord = (
     draft: WebAIExecutionRecordDraft,
   ): string => {
     const record = createExecutionRecord(draft);
-    setExecutionRecords((current) =>
-      [record, ...current].slice(0, EXECUTION_RECORD_LIMIT),
+    const next = [record, ...executionRecordsRef.current].slice(
+      0,
+      EXECUTION_RECORD_LIMIT,
     );
+    executionRecordsRef.current = next;
+    setExecutionRecords(next);
     upsertChatSession(record);
     if (!record.hidden) {
       setActiveRecordID(record.id);
     }
     return record.id;
+  };
+
+  const replaceExecutionRecord = (
+    recordID: string,
+    draft: WebAIExecutionRecordDraft,
+  ): boolean => {
+    const current = executionRecordsRef.current;
+    const index = current.findIndex((record) => record.id === recordID);
+    if (index < 0) {
+      return false;
+    }
+    const existing = current[index];
+    const updated: WebAIExecutionRecord = {
+      ...existing,
+      ...draft,
+      createdAt: existing.createdAt,
+      id: existing.id,
+    };
+    const next = [...current];
+    next[index] = updated;
+    executionRecordsRef.current = next;
+    setExecutionRecords(next);
+    const sessionID = activeSessionIDRef.current;
+    if (sessionID) {
+      setChatSessions((sessions) =>
+        saveChatSessions(
+          updateChatSessionsRecords(sessions, {
+            records: next,
+            serviceID: service.id,
+            serviceLabel: service.label,
+            sessionID,
+          }),
+        ),
+      );
+    }
+    setActiveRecordID(recordID);
+    return true;
   };
 
   const upsertChatSession = (record: WebAIExecutionRecord) => {
@@ -316,9 +359,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const replaceActiveSessionRecords = (records: WebAIExecutionRecord[]) => {
     const sessionID = activeSessionIDRef.current;
     if (!sessionID) {
+      executionRecordsRef.current = records;
       setExecutionRecords(records);
       return;
     }
+    executionRecordsRef.current = records;
     setExecutionRecords(records);
     setChatSessions((current) =>
       saveChatSessions(
@@ -335,6 +380,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const openSession = (session: WebAIChatSession) => {
     const records = clampSessionRecords(session.records);
     setActiveSessionID(session.id);
+    executionRecordsRef.current = records;
     setExecutionRecords(records);
     setActiveRecordID(records.find((record) => !record.hidden)?.id || null);
     setStatus(`Loaded session: ${session.title}`);
@@ -523,7 +569,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       return false;
     }
     lastCapturedAssistantTextRef.current = dedupeKey;
-    appendExecutionRecord({
+    const draft: WebAIExecutionRecordDraft = {
       body: normalized.body,
       kind: options.kind || "assistant",
       sourcePrompt: options.sourcePrompt,
@@ -531,7 +577,20 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       subtitle: options.subtitle || service.label,
       thinking: normalized.thinking,
       title: options.title || "Captured web answer",
-    });
+    };
+    if (options.pendingRecordID && replaceExecutionRecord(options.pendingRecordID, draft)) {
+      if (pendingCaptureRecordIDRef.current === options.pendingRecordID) {
+        pendingCaptureRecordIDRef.current = null;
+      }
+      return true;
+    }
+    appendExecutionRecord(draft);
+    if (
+      options.pendingRecordID &&
+      pendingCaptureRecordIDRef.current === options.pendingRecordID
+    ) {
+      pendingCaptureRecordIDRef.current = null;
+    }
     return true;
   };
 
@@ -550,6 +609,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         () => lastCapturedAssistantTextRef.current,
       );
       if (!captured || runId !== assistantCaptureRunRef.current) {
+        if (runId === assistantCaptureRunRef.current) {
+          markPendingCaptureNeeded(options);
+        }
         return;
       }
       if (recordAssistantReply(captured, options)) {
@@ -561,8 +623,23 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         setStatus(
           `Prompt sent. If the answer is not captured automatically, click Capture.`,
         );
+        markPendingCaptureNeeded(options);
       }
     }
+  };
+
+  const markPendingCaptureNeeded = (options?: AssistantReplyRecordOptions) => {
+    if (!options?.pendingRecordID) {
+      return;
+    }
+    replaceExecutionRecord(options.pendingRecordID, {
+      body: "Prompt sent to the web chat. If Zotero WebAI does not capture the answer automatically, wait for the web answer to finish and click Capture.",
+      kind: options.kind || "assistant",
+      sourcePrompt: options.sourcePrompt,
+      status: "running",
+      subtitle: options.subtitle || service.label,
+      title: "Capture needed",
+    });
   };
 
   const deliverPrompt = async (
@@ -580,6 +657,20 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       ...captureOptions,
       sourcePrompt: captureOptions?.sourcePrompt || prompt,
     };
+    const pendingRecordID = shouldCreatePendingReplyRecord(prompt)
+      ? appendExecutionRecord({
+          body: formatPendingReplyBody(result, service.label, prompt.length),
+          kind: nextCaptureOptions.kind || "assistant",
+          sourcePrompt: nextCaptureOptions.sourcePrompt,
+          status: "running",
+          subtitle: nextCaptureOptions.subtitle || service.label,
+          title: nextCaptureOptions.title || "Waiting for web answer",
+        })
+      : null;
+    if (pendingRecordID) {
+      pendingCaptureRecordIDRef.current = pendingRecordID;
+      nextCaptureOptions.pendingRecordID = pendingRecordID;
+    }
     if (result.ok && result.submitted) {
       setStatus(
         `${statusPrefix ? `${statusPrefix} ` : ""}Prompt sent to ${service.label}; waiting for result.`,
@@ -677,7 +768,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     }
     recordAssistantReply(
       captured,
-      buildCommandReplyRecordOptions(selectedSkill, service.label),
+      {
+        ...buildCommandReplyRecordOptions(selectedSkill, service.label),
+        pendingRecordID: pendingCaptureRecordIDRef.current || undefined,
+      },
     );
     setStatus(`Captured latest ${service.label} answer into Zotero WebAI.`);
     setIsError(false);
@@ -701,7 +795,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       return;
     }
     setSelectedSkillID(skill.id);
-    setMessage(removeSlashToken(message).trimStart());
+    setMessage(removeSlashToken(message, [skill, ...slashCommands]).trimStart());
     setStatus(formatSlashCommandStatus(skill));
     setIsError(false);
   };
@@ -709,9 +803,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const selectService = (candidate: WebAIService) => {
     setService(candidate);
     setZaiLoginMode(candidate.id === "zai" && !isReaderWorkspace);
-    if (isReaderWorkspace) {
-      setChatCollapsed(true);
-    }
+    setChatCollapsed(false);
   };
 
   const openServiceLoginWindow = () => {
@@ -1322,8 +1414,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       </div>
       )}
 
-      {!isZAILoginMode &&
-        (isReaderWorkspace || visibleExecutionRecords.length > 0 || historyVisible) && (
+      {!isZAILoginMode && (
         <div
           style={{
             ...styles.executionPanel,
@@ -1427,11 +1518,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                       color: theme.mutedText,
                     }}
                   >
-                    Select a saved session or send a message to start a new turn.
+                    Send a message to start a new turn, type / for commands, or use /new conversation to reset.
                   </div>
                 )}
               </div>
-            </div>
+          </div>
         </div>
       )}
 
@@ -1600,7 +1691,11 @@ function isNewConversationCommand(value: string): boolean {
   return ["new", "newconversation", "newchat"].includes(normalized);
 }
 
-function removeSlashToken(value: string): string {
+function removeSlashToken(value: string, skills: WebAISkill[]): string {
+  const matchedSkill = matchLeadingSlashSkill(value, skills);
+  if (matchedSkill) {
+    return value.slice(matchedSkill.consumed).replace(/^\s+/, "");
+  }
   return value.replace(/^\s*\/[^\s]*(?:\s+)?/, "");
 }
 
@@ -1609,19 +1704,13 @@ function resolveSkillFromMessage(
   skills: WebAISkill[],
   selectedSkill: WebAISkill | null,
 ): { message: string; skill: WebAISkill | null } {
-  const match = value.match(/^\s*\/([^\s]+)(?:\s+([\s\S]*))?$/);
-  if (!match) {
+  const matched = matchLeadingSlashSkill(value, skills);
+  if (!matched) {
     return { message: value, skill: selectedSkill };
   }
-
-  const command = normalizeSlashCommand(match[1] || "");
-  const matchedSkill =
-    skills.find(
-      (skill) => matchesSlashSkill(skill, command),
-    ) || selectedSkill;
   return {
-    message: match[2] || "",
-    skill: matchedSkill,
+    message: value.slice(matched.consumed).replace(/^\s+/, ""),
+    skill: matched.skill || selectedSkill,
   };
 }
 
@@ -1645,6 +1734,63 @@ function matchesSlashSkill(skill: WebAISkill, command: string): boolean {
   return buildSlashSearchTokens(skill).some(
     (token) => normalizeSlashCommand(token).toLowerCase() === normalizedCommand,
   );
+}
+
+function matchLeadingSlashSkill(
+  value: string,
+  skills: WebAISkill[],
+): { consumed: number; skill: WebAISkill } | null {
+  const match = value.match(/^\s*\/([\s\S]*)$/);
+  if (!match || match.index !== 0) {
+    return null;
+  }
+  const leadingLength = value.match(/^\s*\//)?.[0]?.length || 0;
+  const tail = match[1] || "";
+  const candidates = skills
+    .flatMap((skill) =>
+      buildSlashSearchTokens(skill).map((token) => ({
+        normalized: normalizeSlashCommand(token).toLowerCase(),
+        skill,
+      })),
+    )
+    .filter((candidate) => candidate.normalized)
+    .sort((left, right) => right.normalized.length - left.normalized.length);
+
+  const normalizedTail = normalizeSlashCommand(tail).toLowerCase();
+  for (const candidate of candidates) {
+    if (!normalizedTail.startsWith(candidate.normalized)) {
+      continue;
+    }
+    const consumedTail = consumeSlashCommandCharacters(tail, candidate.normalized);
+    if (consumedTail > 0) {
+      return {
+        consumed: leadingLength + consumedTail,
+        skill: candidate.skill,
+      };
+    }
+  }
+  return null;
+}
+
+function consumeSlashCommandCharacters(value: string, normalizedCommand: string): number {
+  let normalized = "";
+  for (let index = 0; index < value.length; index += 1) {
+    const character = value[index];
+    if (/\s/.test(character)) {
+      if (normalized.length >= normalizedCommand.length) {
+        return index;
+      }
+      continue;
+    }
+    normalized += character.toLowerCase();
+    if (normalized === normalizedCommand) {
+      return index + 1;
+    }
+    if (!normalizedCommand.startsWith(normalized)) {
+      return 0;
+    }
+  }
+  return normalized === normalizedCommand ? value.length : 0;
 }
 
 function normalizeSlashCommand(value: string): string {
@@ -3653,6 +3799,28 @@ function formatRecordSourceForChat(record: WebAIExecutionRecord): string {
     return `/${CURRENT_PDF_COMMAND.slashCommand} ${compactMessage}`;
   }
   return compactMessage;
+}
+
+function shouldCreatePendingReplyRecord(prompt: string): boolean {
+  const text = normalizeCapturedText(prompt);
+  if (!text) {
+    return false;
+  }
+  return !/Zotero WebAI MCP tool (result|error):/i.test(text);
+}
+
+function formatPendingReplyBody(
+  result: PromptInsertResult,
+  serviceLabel: string,
+  promptLength: number,
+): string {
+  if (result.ok && result.submitted) {
+    return `Prompt sent to ${serviceLabel}. Waiting for the web answer...`;
+  }
+  if (result.ok) {
+    return `Prompt inserted into ${serviceLabel}. Send it in the web chat, then click Capture if Zotero WebAI does not capture the answer automatically.`;
+  }
+  return `Prompt copied (${promptLength} characters). If it did not appear in ${serviceLabel}, click the web chat box and paste, then click Capture after the answer finishes.`;
 }
 
 function getRecordKindLabel(kind: WebAIExecutionKind): string {
@@ -5934,18 +6102,15 @@ const styles: Record<string, React.CSSProperties> = {
   slashMenu: {
     border: "1px solid #e0e0e0",
     borderRadius: "10px",
-    bottom: "calc(100% + 6px)",
-    boxShadow: "0 8px 24px rgba(0, 0, 0, 0.12)",
+    boxShadow: "none",
     boxSizing: "border-box",
     display: "flex",
     flexDirection: "column",
-    left: "10px",
     maxHeight: "220px",
     overflow: "auto",
     padding: "6px",
-    position: "absolute",
-    right: "10px",
-    zIndex: 2,
+    position: "relative",
+    width: "100%",
   },
   skillOption: {
     alignItems: "center",
