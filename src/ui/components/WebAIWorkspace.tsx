@@ -594,6 +594,28 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     return true;
   };
 
+  const updatePendingAssistantReply = (
+    captured: string,
+    options?: AssistantReplyRecordOptions,
+  ) => {
+    if (!options?.pendingRecordID) {
+      return;
+    }
+    const normalized = normalizeAssistantCapture(captured, options.sourcePrompt);
+    if (!normalized.body || looksLikeInternalBridgeOutput(normalized.body)) {
+      return;
+    }
+    replaceExecutionRecord(options.pendingRecordID, {
+      body: normalized.body,
+      kind: options.kind || "assistant",
+      sourcePrompt: options.sourcePrompt,
+      status: "running",
+      subtitle: options.subtitle || service.label,
+      thinking: normalized.thinking,
+      title: options.title || "Web answer",
+    });
+  };
+
   const waitForAssistantReply = async (
     baselineText?: string,
     options?: AssistantReplyRecordOptions,
@@ -607,6 +629,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         () => runId === assistantCaptureRunRef.current,
         options?.sourcePrompt,
         () => lastCapturedAssistantTextRef.current,
+        (candidate) => updatePendingAssistantReply(candidate.body, options),
       );
       if (!captured || runId !== assistantCaptureRunRef.current) {
         if (runId === assistantCaptureRunRef.current) {
@@ -664,7 +687,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           sourcePrompt: nextCaptureOptions.sourcePrompt,
           status: "running",
           subtitle: nextCaptureOptions.subtitle || service.label,
-          title: nextCaptureOptions.title || "Waiting for web answer",
+          title: nextCaptureOptions.title || "Web answer",
         })
       : null;
     if (pendingRecordID) {
@@ -1113,6 +1136,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 </pre>
               </details>
             )}
+            {record.status === "done" && (
             <div style={styles.recordActions}>
               <button
                 style={{
@@ -1148,6 +1172,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 追加笔记
               </button>
             </div>
+            )}
           </article>
         </div>
       </section>
@@ -5418,6 +5443,7 @@ async function waitForStableAssistantText(
   shouldContinue: () => boolean,
   sourcePrompt = "",
   getPreviousCapture: () => string = () => "",
+  onCandidate?: (candidate: AssistantCandidate) => void,
 ): Promise<string> {
   const baseline = extractAssistantCandidate(
     baselineText,
@@ -5454,6 +5480,7 @@ async function waitForStableAssistantText(
     } else {
       bestCandidate = candidate.body;
       stableReads = 0;
+      onCandidate?.(candidate);
     }
     if (stableReads >= 2) {
       return bestCandidate;
@@ -5703,7 +5730,6 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: "160px",
     overflow: "auto",
     padding: "8px",
-    resize: "vertical",
   },
   historyHeader: {
     alignItems: "center",
@@ -5769,7 +5795,6 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: 0,
     overflow: "auto",
     padding: "4px 8px 12px",
-    resize: "vertical",
     width: "100%",
   },
   emptyConversation: {
@@ -5811,7 +5836,6 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: "160px",
     overflow: "auto",
     padding: "13px 16px",
-    resize: "vertical",
     MozUserSelect: "text",
     userSelect: "text",
   },
@@ -5824,7 +5848,6 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: "220px",
     overflow: "auto",
     padding: "14px 16px",
-    resize: "vertical",
     MozUserSelect: "text",
     userSelect: "text",
     width: "100%",
