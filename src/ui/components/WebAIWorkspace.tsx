@@ -2333,7 +2333,7 @@ function buildLatestAssistantTextFrameScript(messageName: string): string {
 (function () {
   const messageName = ${JSON.stringify(messageName)};
   const MCP_BRIDGE_SCAN_TEXT_LIMIT = ${MCP_BRIDGE_SCAN_TEXT_LIMIT};
-  ${readLatestAssistantTextFromDocument.toString()}
+  ${readLatestAssistantTextFromDocumentSource()}
   try {
     sendAsyncMessage(messageName, {
       ok: true,
@@ -2341,8 +2341,9 @@ function buildLatestAssistantTextFrameScript(messageName: string): string {
     });
   } catch (error) {
     sendAsyncMessage(messageName, {
-      ok: false,
-      reason: error && error.message ? error.message : "frame-script-exception"
+      ok: true,
+      reason: error && error.message ? error.message : "frame-script-fallback",
+      text: readLatestAssistantPlainTextFromDocument(content.document)
     });
   }
 })();`;
@@ -2569,6 +2570,25 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
       ? String((root as HTMLElement).innerText || "")
       : String(root.textContent || "");
   return normalizeText(fallbackText).slice(-scanLimit);
+}
+
+function readLatestAssistantPlainTextFromDocument(doc: Document): string {
+  const root =
+    doc.querySelector("main") ||
+    doc.querySelector('[role="main"]') ||
+    doc.body ||
+    doc.documentElement;
+  const text =
+    root && "innerText" in root
+      ? String((root as HTMLElement).innerText || "")
+      : String(root?.textContent || "");
+  return text
+    .replace(/\r\n?/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim()
+    .slice(-MCP_BRIDGE_SCAN_TEXT_LIMIT);
 }
 
 function elementHasMarkdownStructure(element: Element): boolean {
@@ -3058,6 +3078,26 @@ ${submitWebChatPrompt.toString()}
 ${isVisibleSubmitCandidate.toString()}
 ${scoreSubmitCandidate.toString()}
 ${insertPromptIntoDocument.toString()}`;
+}
+
+function readLatestAssistantTextFromDocumentSource(): string {
+  return `${readLatestAssistantPlainTextFromDocument.toString()}
+${elementHasMarkdownStructure.toString()}
+${serializeElementToMarkdown.toString()}
+${serializeMarkdownNode.toString()}
+${serializeContainerMarkdown.toString()}
+${isMarkdownBlockNode.toString()}
+${serializeListMarkdown.toString()}
+${serializeListItemMarkdown.toString()}
+${serializeTableMarkdown.toString()}
+${serializeInlineMarkdown.toString()}
+${serializeInlineMarkdownNode.toString()}
+${getElementChildNodes.toString()}
+${getElementChildren.toString()}
+${normalizeInlineMarkdownText.toString()}
+${escapeMarkdownTableCell.toString()}
+${cleanupSerializedMarkdown.toString()}
+${readLatestAssistantTextFromDocument.toString()}`;
 }
 
 function openExternalURL(url: string): void {
