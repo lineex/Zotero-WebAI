@@ -3115,6 +3115,77 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
     );
   };
 
+  const getElementDescriptor = (element: Element) =>
+    [
+      element.tagName,
+      element.id,
+      element.className,
+      element.getAttribute("role"),
+      element.getAttribute("data-role"),
+      element.getAttribute("data-author"),
+      element.getAttribute("data-message-author-role"),
+      element.getAttribute("data-testid"),
+      element.getAttribute("aria-label"),
+    ]
+      .join(" ")
+      .toLowerCase();
+
+  const hasComposerControls = (element: Element) =>
+    Boolean(
+      element.querySelector(
+        "textarea,input,select,option,form,[role='textbox'],[contenteditable='true']",
+      ),
+    );
+
+  const hasMultipleMessageContainers = (element: Element) =>
+    element.querySelectorAll(
+      "[data-message-author-role], [data-role='assistant'], [class*='message'], [class*='Message']",
+    ).length > 4;
+
+  const isAnswerLikeContainer = (element: Element) => {
+    const descriptor = getElementDescriptor(element);
+    if (
+      /user|human|prompt|question|composer|input|textarea|toolbar|sidebar|nav|menu|footer|header/.test(
+        descriptor,
+      )
+    ) {
+      return false;
+    }
+    return /assistant|answer|response|bot|ai|message|markdown|prose|ds-markdown|chat|content|article/.test(
+      descriptor,
+    );
+  };
+
+  const expandToFullAnswerElement = (element: Element) => {
+    let best = element;
+    let bestText = getElementText(best);
+    let current: Element | null = element.parentElement;
+    let depth = 0;
+    while (current && current !== root && depth < 8) {
+      depth += 1;
+      if (
+        !isVisible(current) ||
+        !isAnswerLikeContainer(current) ||
+        hasComposerControls(current) ||
+        hasMultipleMessageContainers(current)
+      ) {
+        current = current.parentElement;
+        continue;
+      }
+      const text = getElementText(current);
+      if (
+        isUsableAssistantText(text) &&
+        text.length > bestText.length + 24 &&
+        text.length <= 24000
+      ) {
+        best = current;
+        bestText = text;
+      }
+      current = current.parentElement;
+    }
+    return best;
+  };
+
   const candidateSelectors = [
     "[data-message-author-role='assistant'] [class*='markdown']",
     "[data-message-author-role='assistant'] [class*='prose']",
@@ -3209,19 +3280,7 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
 
     const htmlElement = element as HTMLElement;
     const rect = htmlElement.getBoundingClientRect();
-    const descriptor = [
-      element.tagName,
-      element.id,
-      element.className,
-      element.getAttribute("role"),
-      element.getAttribute("data-role"),
-      element.getAttribute("data-author"),
-      element.getAttribute("data-message-author-role"),
-      element.getAttribute("data-testid"),
-      element.getAttribute("aria-label"),
-    ]
-      .join(" ")
-      .toLowerCase();
+    const descriptor = getElementDescriptor(element);
     const allNodes = Array.from(root.querySelectorAll("*"));
     const domIndex = allNodes.indexOf(element);
     let score =
@@ -3233,7 +3292,16 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
       score += 12000;
     }
     if (element.querySelector("h1,h2,h3,h4,h5,h6,ul,ol,table")) {
-      score += 4500;
+      score += 9000;
+    }
+    if (/^#{1,3}\s/m.test(text) || /\n\s*[-*]\s+/.test(text) || /\|.+\|/.test(text)) {
+      score += 6500;
+    }
+    if (text.length >= 400) {
+      score += 5000;
+    }
+    if (text.length < 120 && !element.querySelector("h1,h2,h3,h4,h5,h6")) {
+      score -= 6500;
     }
     if (/message|article|conversation|chat/.test(descriptor)) {
       score += 1200;
@@ -3262,11 +3330,12 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
 
   const ranked = Array.from(candidates)
     .map((element, index) => {
-      const text = getElementText(element);
+      const expanded = expandToFullAnswerElement(element);
+      const text = getElementText(expanded);
       return {
-        element,
+        element: expanded,
         index,
-        score: scoreCandidate(element, text),
+        score: scoreCandidate(expanded, text),
         text,
       };
     })
