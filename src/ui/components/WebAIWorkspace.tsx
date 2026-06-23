@@ -182,6 +182,7 @@ interface FrameMessageManager {
 }
 
 const PROMPT_TEXT_LIMIT = 60000;
+const ASSISTANT_CAPTURE_TEXT_LIMIT = 60000;
 const MCP_CONTEXT_TEXT_LIMIT = 12000;
 const MCP_ITEM_TEXT_LIMIT = 1800;
 const MCP_SCHEMA_TEXT_LIMIT = 2200;
@@ -2543,8 +2544,14 @@ async function insertPromptIntoWebChat(
     return { ok: false, reason: "web-frame-missing" };
   }
 
-  const directResult = insertPromptDirectly(frame, prompt, submit);
+  const directResult = await insertPromptDirectly(frame, prompt, submit);
   if (directResult.ok) {
+    if (submit && !directResult.submitted) {
+      const scriptedResult = await insertPromptWithFrameScript(frame, prompt, submit);
+      if (scriptedResult.ok) {
+        return scriptedResult;
+      }
+    }
     return directResult;
   }
 
@@ -2555,21 +2562,21 @@ function insertPromptDirectly(
   frame: Element,
   prompt: string,
   submit: boolean,
-): PromptInsertResult {
+): Promise<PromptInsertResult> {
   try {
     const doc = (frame as HTMLIFrameElement).contentWindow?.document;
     if (!doc) {
-      return { ok: false, reason: "content-document-missing" };
+      return Promise.resolve({ ok: false, reason: "content-document-missing" });
     }
     return insertPromptIntoDocument(doc, prompt, "direct-dom", submit);
   } catch (error) {
-    return {
+    return Promise.resolve({
       ok: false,
       reason:
         error instanceof Error && error.message
           ? error.message
           : "direct-dom-unavailable",
-    };
+    });
   }
 }
 
@@ -2619,7 +2626,7 @@ function insertPromptWithFrameScript(
     const timeoutId = timerHost.setTimeout(() => {
       cleanup();
       resolve({ ok: false, reason: "frame-script-timeout" });
-    }, 1500);
+    }, submit ? 4500 : 1800);
 
     const finish = (result: PromptInsertResult) => {
       timerHost.clearTimeout(timeoutId);
@@ -2921,13 +2928,13 @@ function buildPromptInsertFrameScript(
   submit: boolean,
 ): string {
   return `
-(function () {
+(async function () {
   const messageName = ${JSON.stringify(messageName)};
   const prompt = ${JSON.stringify(prompt)};
   const submit = ${JSON.stringify(submit)};
   ${insertPromptIntoDocumentSource()}
   try {
-    const result = insertPromptIntoDocument(content.document, prompt, "frame-script", submit);
+    const result = await insertPromptIntoDocument(content.document, prompt, "frame-script", submit);
     sendAsyncMessage(messageName, result);
   } catch (error) {
     sendAsyncMessage(messageName, {
@@ -2979,18 +2986,19 @@ function buildLatestAssistantTextFrameScript(messageName: string): string {
 })();`;
 }
 
-function insertPromptIntoDocument(
+async function insertPromptIntoDocument(
   doc: Document,
   prompt: string,
   method: string,
   submit = false,
-): PromptInsertResult {
+): Promise<PromptInsertResult> {
   const composer = findWebChatComposer(doc);
   if (!composer) {
     return { ok: false, method, reason: "composer-not-found" };
   }
   writePromptToComposer(composer, prompt);
-  const submitted = submit ? submitWebChatPrompt(doc, composer) : false;
+  await waitForPromptHydration(doc, composer, prompt);
+  const submitted = submit ? await submitWebChatPrompt(doc, composer) : false;
   return { ok: true, method, submitted };
 }
 
@@ -3165,10 +3173,13 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
       depth += 1;
       if (
         !isVisible(current) ||
-        !isAnswerLikeContainer(current) ||
         hasComposerControls(current) ||
         hasMultipleMessageContainers(current)
       ) {
+        current = current.parentElement;
+        continue;
+      }
+      if (!isAnswerLikeContainer(current) && depth > 3) {
         current = current.parentElement;
         continue;
       }
@@ -3248,10 +3259,11 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
   const strictRanked = Array.from(strictCandidates)
     .map((element, index) => {
       const contentElement = getAssistantContentElement(element);
-      const text = getElementText(contentElement);
-      const rect = (element as HTMLElement).getBoundingClientRect?.();
+      const expanded = expandToFullAnswerElement(contentElement);
+      const text = getElementText(expanded);
+      const rect = (expanded as HTMLElement).getBoundingClientRect?.();
       return {
-        element,
+        element: expanded,
         index,
         rectBottom: rect?.bottom || 0,
         text,
@@ -3668,6 +3680,22 @@ function cleanupSerializedMarkdown(value: string): string {
     .trim();
 }
 
+function sleepInDocument(doc: Document, timeoutMs: number): Promise<void> {
+  const win = doc.defaultView;
+  return new Promise((resolve) => {
+    const timer =
+      win?.setTimeout ||
+      ((globalThis as unknown as {
+        setTimeout?: (callback: () => void, timeoutMs: number) => unknown;
+      }).setTimeout);
+    if (timer) {
+      timer(resolve, timeoutMs);
+      return;
+    }
+    void Promise.resolve().then(resolve);
+  });
+}
+
 function findWebChatComposer(doc: Document): HTMLElement | null {
   const selectors = [
     "textarea:not([disabled]):not([readonly])",
@@ -3693,44 +3721,44 @@ function findWebChatComposer(doc: Document): HTMLElement | null {
   return visibleCandidates[0] || null;
 }
 
-function submitWebChatPrompt(doc: Document, composer: HTMLElement): boolean {
-  const buttons = Array.from(
-    doc.querySelectorAll("button, [role='button']"),
-  ) as HTMLElement[];
-  const visibleButtons = buttons
-    .filter(isVisibleSubmitCandidate)
-    .sort((left, right) => scoreSubmitCandidate(right) - scoreSubmitCandidate(left));
-  const submitButton = visibleButtons[0] || null;
-  if (submitButton) {
-    submitButton.click();
-    return true;
+async function submitWebChatPrompt(
+  doc: Document,
+  composer: HTMLElement,
+): Promise<boolean> {
+  const delays = [60, 120, 200, 320, 480, 650];
+  for (const delay of delays) {
+    await sleepInDocument(doc, delay);
+    const submitButton = findWebChatSubmitButton(doc, composer);
+    if (submitButton) {
+      clickSubmitButton(submitButton);
+      return true;
+    }
   }
 
-  const win = doc.defaultView;
-  try {
-    composer.dispatchEvent(
-      new (win?.KeyboardEvent || KeyboardEvent)("keydown", {
-        bubbles: true,
-        cancelable: true,
-        code: "Enter",
-        key: "Enter",
-      }),
-    );
-    composer.dispatchEvent(
-      new (win?.KeyboardEvent || KeyboardEvent)("keyup", {
-        bubbles: true,
-        cancelable: true,
-        code: "Enter",
-        key: "Enter",
-      }),
-    );
-    return true;
-  } catch {
-    return false;
-  }
+  return dispatchEnterToComposer(doc, composer);
 }
 
-function isVisibleSubmitCandidate(element: HTMLElement): boolean {
+function findWebChatSubmitButton(
+  doc: Document,
+  composer: HTMLElement,
+): HTMLElement | null {
+  const buttons = Array.from(
+    doc.querySelectorAll("button, [role='button'], [aria-label], [title]"),
+  ) as HTMLElement[];
+  const visibleButtons = buttons
+    .filter((button) => isVisibleSubmitCandidate(button, composer))
+    .sort(
+      (left, right) =>
+        scoreSubmitCandidate(right, composer) -
+        scoreSubmitCandidate(left, composer),
+    );
+  return visibleButtons[0] || null;
+}
+
+function isVisibleSubmitCandidate(
+  element: HTMLElement,
+  composer?: HTMLElement,
+): boolean {
   const rect = element.getBoundingClientRect();
   const doc = element.ownerDocument;
   if (!doc) {
@@ -3746,19 +3774,39 @@ function isVisibleSubmitCandidate(element: HTMLElement): boolean {
     .toLowerCase();
   const disabled =
     element.hasAttribute("disabled") ||
-    element.getAttribute("aria-disabled") === "true";
+    element.getAttribute("aria-disabled") === "true" ||
+    element.getAttribute("data-disabled") === "true";
+  const composerRect = composer?.getBoundingClientRect();
+  const nearComposer = composerRect
+    ? rect.bottom >= composerRect.top - 120 &&
+      rect.top <= composerRect.bottom + 120 &&
+      rect.right >= composerRect.left &&
+      rect.left <= composerRect.right + 180
+    : false;
+  const iconLike = Boolean(
+    element.querySelector("svg") ||
+      /arrow|send|paper|plane|up|submit|发送|送出|提交|发送消息/i.test(label),
+  );
   return Boolean(
     !disabled &&
       rect.width >= 18 &&
       rect.height >= 18 &&
+      rect.width <= 140 &&
+      rect.height <= 140 &&
       style?.display !== "none" &&
       style?.visibility !== "hidden" &&
       !element.closest("[aria-hidden='true']") &&
-      /(send|submit|发送|送出|arrow|paper|chat)/i.test(label),
+      (/(send|submit|发送|送出|提交|发送消息|arrow|paper|plane|up|chat)/i.test(
+        label,
+      ) ||
+        (nearComposer && iconLike)),
   );
 }
 
-function scoreSubmitCandidate(element: HTMLElement): number {
+function scoreSubmitCandidate(
+  element: HTMLElement,
+  composer?: HTMLElement,
+): number {
   const rect = element.getBoundingClientRect();
   const label = [
     element.getAttribute("aria-label"),
@@ -3767,11 +3815,83 @@ function scoreSubmitCandidate(element: HTMLElement): number {
   ]
     .join(" ")
     .toLowerCase();
+  const composerRect = composer?.getBoundingClientRect();
   let score = rect.bottom * 10 + rect.right;
-  if (/(send|发送|submit)/i.test(label)) score += 100000;
-  if (/(arrow|paper|plane)/i.test(label)) score += 20000;
+  if (/(send|发送|送出|提交|发送消息|submit)/i.test(label)) score += 100000;
+  if (/(arrow|paper|plane|up)/i.test(label)) score += 25000;
   if (element.tagName.toLowerCase() === "button") score += 10000;
+  if (element.querySelector("svg")) score += 8000;
+  if (composerRect) {
+    const verticalDistance = Math.min(
+      Math.abs(rect.top - composerRect.top),
+      Math.abs(rect.bottom - composerRect.bottom),
+      Math.abs(rect.top - composerRect.bottom),
+    );
+    score += Math.max(0, 20000 - verticalDistance * 160);
+    if (rect.left >= composerRect.left + composerRect.width * 0.45) {
+      score += 12000;
+    }
+    if (rect.left < composerRect.left - 30 || rect.top < composerRect.top - 140) {
+      score -= 30000;
+    }
+  }
   return score;
+}
+
+function clickSubmitButton(element: HTMLElement): void {
+  const doc = element.ownerDocument;
+  if (!doc) {
+    element.click();
+    return;
+  }
+  const win = doc.defaultView;
+  element.focus?.();
+  const eventOptions = {
+    bubbles: true,
+    cancelable: true,
+    view: win || undefined,
+  };
+  try {
+    element.dispatchEvent(
+      new (win?.MouseEvent || MouseEvent)("pointerdown", eventOptions),
+    );
+  } catch {
+    // Pointer-style events are best effort in embedded pages.
+  }
+  try {
+    element.dispatchEvent(
+      new (win?.MouseEvent || MouseEvent)("mousedown", eventOptions),
+    );
+    element.dispatchEvent(
+      new (win?.MouseEvent || MouseEvent)("mouseup", eventOptions),
+    );
+    element.dispatchEvent(
+      new (win?.MouseEvent || MouseEvent)("click", eventOptions),
+    );
+  } catch {
+    element.click();
+  }
+}
+
+function dispatchEnterToComposer(doc: Document, composer: HTMLElement): boolean {
+  const win = doc.defaultView;
+  try {
+    ["keydown", "keypress", "keyup"].forEach((type) => {
+      composer.dispatchEvent(
+        new (win?.KeyboardEvent || KeyboardEvent)(type, {
+          bubbles: true,
+          cancelable: true,
+          code: "Enter",
+          key: "Enter",
+          keyCode: 13,
+          which: 13,
+        } as KeyboardEventInit),
+      );
+    });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function isVisibleComposerCandidate(element: HTMLElement): boolean {
@@ -3809,7 +3929,7 @@ function writePromptToComposer(element: HTMLElement, prompt: string): void {
   element.focus();
   const tagName = element.tagName.toLowerCase();
   if (tagName === "textarea" || tagName === "input") {
-    (element as HTMLTextAreaElement | HTMLInputElement).value = prompt;
+    setNativeInputValue(element as HTMLTextAreaElement | HTMLInputElement, prompt);
   } else {
     const selection = doc.defaultView?.getSelection();
     const range = doc.createRange();
@@ -3817,10 +3937,28 @@ function writePromptToComposer(element: HTMLElement, prompt: string): void {
     selection?.removeAllRanges();
     selection?.addRange(range);
     if (!doc.execCommand("insertText", false, prompt)) {
-      element.textContent = prompt;
+      element.replaceChildren(doc.createTextNode(prompt));
     }
   }
   dispatchComposerEvents(element, prompt);
+}
+
+function setNativeInputValue(
+  element: HTMLTextAreaElement | HTMLInputElement,
+  value: string,
+): void {
+  const win = element.ownerDocument?.defaultView;
+  const tagName = element.tagName.toLowerCase();
+  const prototype =
+    tagName === "textarea"
+      ? (win?.HTMLTextAreaElement || HTMLTextAreaElement).prototype
+      : (win?.HTMLInputElement || HTMLInputElement).prototype;
+  const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+  if (descriptor?.set) {
+    descriptor.set.call(element, value);
+  } else {
+    element.value = value;
+  }
 }
 
 function dispatchComposerEvents(element: HTMLElement, prompt: string): void {
@@ -3831,7 +3969,7 @@ function dispatchComposerEvents(element: HTMLElement, prompt: string): void {
   const win = doc.defaultView;
   try {
     element.dispatchEvent(
-      new InputEvent("beforeinput", {
+      new (win?.InputEvent || InputEvent)("beforeinput", {
         bubbles: true,
         cancelable: true,
         data: prompt,
@@ -3853,6 +3991,30 @@ function dispatchComposerEvents(element: HTMLElement, prompt: string): void {
     element.dispatchEvent(new Event("input", { bubbles: true }));
   }
   element.dispatchEvent(new Event("change", { bubbles: true }));
+  try {
+    element.dispatchEvent(new Event("compositionend", { bubbles: true }));
+  } catch {
+    // Some pages do not use composition events.
+  }
+}
+
+async function waitForPromptHydration(
+  doc: Document,
+  composer: HTMLElement,
+  prompt: string,
+): Promise<void> {
+  const target = prompt.slice(0, Math.min(prompt.length, 128)).trim();
+  for (const delay of [40, 80, 120, 180]) {
+    await sleepInDocument(doc, delay);
+    const text =
+      "value" in composer
+        ? String((composer as HTMLTextAreaElement | HTMLInputElement).value || "")
+        : String(composer.textContent || "");
+    if (!target || text.includes(target)) {
+      return;
+    }
+    dispatchComposerEvents(composer, prompt);
+  }
 }
 
 function insertPromptIntoDocumentSource(): string {
@@ -3860,10 +4022,16 @@ function insertPromptIntoDocumentSource(): string {
 ${isVisibleComposerCandidate.toString()}
 ${scoreComposerCandidate.toString()}
 ${writePromptToComposer.toString()}
+${setNativeInputValue.toString()}
 ${dispatchComposerEvents.toString()}
+${waitForPromptHydration.toString()}
+${sleepInDocument.toString()}
 ${submitWebChatPrompt.toString()}
+${findWebChatSubmitButton.toString()}
 ${isVisibleSubmitCandidate.toString()}
 ${scoreSubmitCandidate.toString()}
+${clickSubmitButton.toString()}
+${dispatchEnterToComposer.toString()}
 ${insertPromptIntoDocument.toString()}`;
 }
 
@@ -5505,9 +5673,12 @@ function normalizeAssistantCapture(
     stripRepeatedCapturePrefix(normalized, previousCapture),
   );
   return {
-    body: truncateText(stripAssistantWebNoise(split.body), MCP_CONTEXT_TEXT_LIMIT),
+    body: truncateText(
+      stripAssistantWebNoise(split.body),
+      ASSISTANT_CAPTURE_TEXT_LIMIT,
+    ),
     thinking: split.thinking
-      ? truncateText(stripAssistantWebNoise(split.thinking), MCP_CONTEXT_TEXT_LIMIT)
+      ? truncateText(stripAssistantWebNoise(split.thinking), ASSISTANT_CAPTURE_TEXT_LIMIT)
       : undefined,
   };
 }
