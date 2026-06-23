@@ -39,6 +39,7 @@ interface WebAIWorkspaceProps {
   customPresets?: string;
   hostWindow: Window;
   incomingPrompt?: IncomingWebPrompt | null;
+  location: "library" | "reader";
   onIncomingPromptHandled?: (id: string) => void;
   onScopeRefresh?: () => void;
   settings: Settings;
@@ -139,9 +140,15 @@ interface AssistantCandidate {
   thinking?: string;
 }
 
+interface MarkdownListItem {
+  level: number;
+  text: string;
+}
+
 type MarkdownBlock =
   | { text: string; type: "blockquote" | "code" | "math" | "paragraph" }
-  | { items: string[]; ordered: boolean; type: "list" }
+  | { items: MarkdownListItem[]; ordered: boolean; type: "list" }
+  | { headers: string[]; rows: string[][]; type: "table" }
   | { level: 1 | 2 | 3; text: string; type: "heading" };
 
 interface MCPBridgeRequest {
@@ -231,17 +238,19 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   customPresets = "",
   hostWindow,
   incomingPrompt,
+  location,
   onIncomingPromptHandled,
   scope,
   settings,
 }) => {
+  const isReaderWorkspace = location === "reader";
   const [service, setService] = useState<WebAIService>(SERVICES[0]);
   const [status, setStatus] = useState(`Loaded ${SERVICES[0].label}`);
   const [isError, setIsError] = useState(false);
   const [message, setMessage] = useState("");
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
   const [historyVisible, setHistoryVisible] = useState(false);
-  const [chatCollapsed, setChatCollapsed] = useState(false);
+  const [chatCollapsed, setChatCollapsed] = useState(() => isReaderWorkspace);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [zaiLoginMode, setZaiLoginMode] = useState(false);
   const [chatSessions, setChatSessions] = useState<WebAIChatSession[]>(() =>
@@ -589,7 +598,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   };
 
   const copyRecord = (record: WebAIExecutionRecord) => {
-    copyTextToClipboard(record.body);
+    copyTextToClipboard(formatMarkdownForDisplay(record.body));
     setStatus(`Copied ${record.title}.`);
     setIsError(false);
   };
@@ -699,7 +708,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
   const selectService = (candidate: WebAIService) => {
     setService(candidate);
-    setZaiLoginMode(candidate.id === "zai");
+    setZaiLoginMode(candidate.id === "zai" && !isReaderWorkspace);
+    if (isReaderWorkspace) {
+      setChatCollapsed(true);
+    }
   };
 
   const openServiceLoginWindow = () => {
@@ -1062,6 +1074,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         ref={frameHostRef}
         style={{
           ...styles.frameHost,
+          ...(isReaderWorkspace ? styles.readerFrameHost : {}),
           ...(isZAILoginMode ? styles.loginFrameHost : {}),
           ...(chatCollapsed ? styles.frameHostCollapsed : {}),
           background: theme.surfaceBackground,
@@ -1103,7 +1116,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               onClick={toggleChatFrame}
               type="button"
             >
-              {chatCollapsed ? "Show Chat" : "Hide Chat"}
+              {chatCollapsed ? "Show Web" : "Hide Web"}
             </button>
             <button
               style={{
@@ -1194,7 +1207,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             onClick={toggleChatFrame}
             type="button"
           >
-            {chatCollapsed ? "Show Chat" : "Hide Chat"}
+            {chatCollapsed ? "Show Web" : "Hide Web"}
           </button>
           <button
             style={{
@@ -1309,10 +1322,12 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       </div>
       )}
 
-      {!isZAILoginMode && (visibleExecutionRecords.length > 0 || historyVisible) && (
+      {!isZAILoginMode &&
+        (isReaderWorkspace || visibleExecutionRecords.length > 0 || historyVisible) && (
         <div
           style={{
             ...styles.executionPanel,
+            ...(isReaderWorkspace ? styles.readerExecutionPanel : {}),
             background: theme.surfaceBackground,
             borderColor: theme.softBorder,
           }}
@@ -2210,16 +2225,36 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
       .trim();
 
   const getElementText = (element: Element) => {
-    const raw =
-      "innerText" in element
-        ? String((element as HTMLElement).innerText || "")
-        : String(element.textContent || "");
+    const textSource = element.cloneNode(true) as Element;
+    textSource
+      .querySelectorAll(
+        "button,svg,nav,header,footer,textarea,input,select,option,[role='button'],[role='toolbar'],[aria-hidden='true'],[hidden]",
+      )
+      .forEach((node: Element) => node.remove());
+    const structured = elementHasMarkdownStructure(textSource);
+    const raw = structured
+      ? serializeElementToMarkdown(textSource)
+      : "innerText" in textSource
+        ? String((textSource as HTMLElement).innerText || "")
+        : String(textSource.textContent || "");
     const noiseLinePattern =
       /^(copy|copied|share|regenerate|retry|stop generating|continue|edit|delete|like|dislike|复制|已复制|分享|重新生成|停止生成|继续生成|编辑|删除|赞|踩)$/i;
-    return normalizeText(raw)
+    const normalized = structured
+      ? cleanupSerializedMarkdown(raw)
+      : normalizeText(raw)
+          .split("\n")
+          .map((line) => line.trim())
+          .filter(Boolean)
+          .join("\n");
+    return normalized
       .split("\n")
-      .map((line) => line.trim())
-      .filter((line) => line && !noiseLinePattern.test(line))
+      .filter((line) => !noiseLinePattern.test(line.trim()))
+      .filter(
+        (line) =>
+          !/^(copy|copied|share|regenerate|retry|stop generating|continue|edit|delete|like|dislike|deep think|search|web search|复制|已复制|分享|重新生成|停止生成|继续生成|编辑|删除|点赞|点踩|深度思考|智能搜索|联网搜索|搜索)$/i.test(
+            line.trim(),
+          ),
+      )
       .join("\n")
       .trim();
   };
@@ -2237,16 +2272,20 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
         style?.opacity !== "0" &&
         !htmlElement.hidden &&
         !htmlElement.closest?.(
-          "textarea,input,button,select,option,nav,header,footer,aside,form,[role='textbox'],[aria-hidden='true'],[hidden]",
+          "textarea,input,select,option,form,[role='textbox'],[aria-hidden='true'],[hidden]",
         ),
     );
   };
 
   const candidateSelectors = [
+    "[data-testid*='assistant-message']",
     "[data-message-author-role='assistant']",
     "[data-role='assistant']",
     "[data-author='assistant']",
     "[data-from='assistant']",
+    "[class*='assistant-message']",
+    "[class*='ds-markdown']",
+    "[class*='markdown-body']",
     "[data-testid*='assistant']",
     "[data-testid*='answer']",
     "[data-testid*='message']",
@@ -2261,7 +2300,6 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
     "[class*='markdown']",
     "[class*='Markdown']",
     "[class*='prose']",
-    "[class*='ds-markdown']",
     "[role='article']",
     "article",
   ];
@@ -2297,10 +2335,18 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
     ]
       .join(" ")
       .toLowerCase();
-    let score = rect.bottom * 10 + Math.min(text.length, 4000);
+    const allNodes = Array.from(root.querySelectorAll("*"));
+    const domIndex = allNodes.indexOf(element);
+    let score =
+      rect.bottom * 20 +
+      (domIndex >= 0 ? domIndex : 0) +
+      Math.min(text.length, 5000);
 
     if (/assistant|answer|response|bot|ai|markdown|prose|ds-markdown/.test(descriptor)) {
-      score += 8000;
+      score += 12000;
+    }
+    if (element.querySelector("h1,h2,h3,h4,h5,h6,ul,ol,table")) {
+      score += 4500;
     }
     if (/message|article|conversation|chat/.test(descriptor)) {
       score += 1200;
@@ -2311,8 +2357,14 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
     if (text.length > 20000 && !/assistant|answer|response|markdown/.test(descriptor)) {
       score -= 12000;
     }
+    if (element.querySelectorAll("[data-message-author-role], [data-role='assistant'], [class*='message'], [class*='Message']").length > 3) {
+      score -= 8000;
+    }
     if ((element.querySelectorAll("button,input,textarea,[contenteditable='true']").length || 0) > 4) {
       score -= 2500;
+    }
+    if (/User message:|Zotero context:|Paper content:|Final answer format:/i.test(text)) {
+      score -= 16000;
     }
 
     return score;
@@ -2346,6 +2398,296 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
       ? String((root as HTMLElement).innerText || "")
       : String(root.textContent || "");
   return normalizeText(fallbackText).slice(-scanLimit);
+}
+
+function elementHasMarkdownStructure(element: Element): boolean {
+  return Boolean(
+    element.querySelector(
+      "h1,h2,h3,h4,h5,h6,p,ul,ol,li,table,thead,tbody,tr,th,td,blockquote,pre,code,strong,b,em,i,a",
+    ),
+  );
+}
+
+function serializeElementToMarkdown(element: Element): string {
+  const chunks = getElementChildNodes(element)
+    .map((node) => serializeMarkdownNode(node, 0))
+    .filter(Boolean);
+  return cleanupSerializedMarkdown(chunks.join("\n\n"));
+}
+
+function serializeMarkdownNode(node: Node, listDepth: number): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return normalizeInlineMarkdownText(node.textContent || "");
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return "";
+  }
+
+  const element = node as Element;
+  const tag = element.tagName.toLowerCase();
+  if (
+    element.matches(
+      "button,svg,nav,header,footer,textarea,input,select,option,[role='button'],[role='toolbar'],[aria-hidden='true'],[hidden]",
+    )
+  ) {
+    return "";
+  }
+
+  if (/^h[1-6]$/.test(tag)) {
+    const level = Math.min(Number(tag.slice(1)) || 3, 3);
+    const text = serializeInlineMarkdown(element).trim();
+    return text ? `${"#".repeat(level)} ${text}` : "";
+  }
+  if (tag === "p" || tag === "div" || tag === "section" || tag === "article") {
+    const childBlocks = serializeContainerMarkdown(element, listDepth);
+    if (childBlocks) {
+      return childBlocks;
+    }
+    return serializeInlineMarkdown(element).trim();
+  }
+  if (tag === "br") {
+    return "\n";
+  }
+  if (tag === "ul" || tag === "ol") {
+    return serializeListMarkdown(element, tag === "ol", listDepth);
+  }
+  if (tag === "blockquote") {
+    return serializeElementToMarkdown(element)
+      .split("\n")
+      .map((line) => (line ? `> ${line}` : ">"))
+      .join("\n");
+  }
+  if (tag === "pre") {
+    const code = (element.textContent || "").replace(/\s+$/g, "");
+    return code ? `\`\`\`\n${code}\n\`\`\`` : "";
+  }
+  if (tag === "table") {
+    return serializeTableMarkdown(element);
+  }
+  if (tag === "li") {
+    return serializeListItemMarkdown(element, false, listDepth, 1);
+  }
+
+  return serializeInlineMarkdown(element).trim();
+}
+
+function serializeContainerMarkdown(element: Element, listDepth: number): string {
+  const blockChildren = getElementChildNodes(element).filter((child) =>
+    isMarkdownBlockNode(child),
+  );
+  if (!blockChildren.length) {
+    return "";
+  }
+
+  const chunks: string[] = [];
+  const inlineBefore: string[] = [];
+  for (const child of getElementChildNodes(element)) {
+    if (isMarkdownBlockNode(child)) {
+      const inline = normalizeInlineMarkdownText(inlineBefore.join(""));
+      if (inline) {
+        chunks.push(inline);
+      }
+      inlineBefore.length = 0;
+      const block = serializeMarkdownNode(child, listDepth);
+      if (block) {
+        chunks.push(block);
+      }
+      continue;
+    }
+    inlineBefore.push(serializeInlineMarkdownNode(child));
+  }
+  const trailingInline = normalizeInlineMarkdownText(inlineBefore.join(""));
+  if (trailingInline) {
+    chunks.push(trailingInline);
+  }
+  return chunks.filter(Boolean).join("\n\n");
+}
+
+function isMarkdownBlockNode(node: Node): boolean {
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return false;
+  }
+  const tag = (node as Element).tagName.toLowerCase();
+  return /^(h[1-6]|p|ul|ol|li|table|blockquote|pre|section|article)$/.test(tag);
+}
+
+function serializeListMarkdown(
+  listElement: Element,
+  ordered: boolean,
+  listDepth: number,
+): string {
+  const items = getElementChildren(listElement).filter(
+    (child) => child.tagName.toLowerCase() === "li",
+  );
+  return items
+    .map((item, index) =>
+      serializeListItemMarkdown(item, ordered, listDepth, index + 1),
+    )
+    .filter(Boolean)
+    .join("\n");
+}
+
+function serializeListItemMarkdown(
+  item: Element,
+  ordered: boolean,
+  listDepth: number,
+  index: number,
+): string {
+  const nestedLists: Element[] = [];
+  const inlineParts: string[] = [];
+  const childBlocks: string[] = [];
+
+  getElementChildNodes(item).forEach((child) => {
+    if (
+      child.nodeType === Node.ELEMENT_NODE &&
+      /^(ul|ol)$/i.test((child as Element).tagName)
+    ) {
+      nestedLists.push(child as Element);
+      return;
+    }
+    if (isMarkdownBlockNode(child) && (child as Element).tagName.toLowerCase() !== "p") {
+      const block = serializeMarkdownNode(child, listDepth + 1);
+      if (block) {
+        childBlocks.push(block);
+      }
+      return;
+    }
+    inlineParts.push(serializeInlineMarkdownNode(child));
+  });
+
+  const text = normalizeInlineMarkdownText(inlineParts.join(""));
+  const marker = ordered ? `${index}.` : "*";
+  const indent = "  ".repeat(listDepth);
+  const continuationIndent = `${indent}  `;
+  const lines = [
+    `${indent}${marker} ${text || childBlocks.shift() || ""}`.trimEnd(),
+  ];
+
+  childBlocks.forEach((block) => {
+    lines.push(
+      block
+        .split("\n")
+        .map((line) => `${continuationIndent}${line}`)
+        .join("\n"),
+    );
+  });
+  nestedLists.forEach((nested) => {
+    const nestedMarkdown = serializeListMarkdown(
+      nested,
+      nested.tagName.toLowerCase() === "ol",
+      listDepth + 1,
+    );
+    if (nestedMarkdown) {
+      lines.push(nestedMarkdown);
+    }
+  });
+  return lines.join("\n");
+}
+
+function serializeTableMarkdown(table: Element): string {
+  const rows = (Array.from(table.querySelectorAll("tr")) as Element[])
+    .map((row) =>
+      getElementChildren(row)
+        .filter((cell) => /^(th|td)$/i.test(cell.tagName))
+        .map((cell) => serializeInlineMarkdown(cell).trim()),
+    )
+    .filter((row) => row.length);
+  if (!rows.length) {
+    return "";
+  }
+
+  const columnCount = Math.max(...rows.map((row) => row.length));
+  const normalizedRows = rows.map((row) =>
+    Array.from({ length: columnCount }, (_, index) => escapeMarkdownTableCell(row[index] || "")),
+  );
+  const header = normalizedRows[0];
+  const separator = header.map(() => ":---");
+  return [
+    `| ${header.join(" | ")} |`,
+    `| ${separator.join(" | ")} |`,
+    ...normalizedRows.slice(1).map((row) => `| ${row.join(" | ")} |`),
+  ].join("\n");
+}
+
+function serializeInlineMarkdown(element: Element): string {
+  return normalizeInlineMarkdownText(
+    getElementChildNodes(element)
+      .map((child) => serializeInlineMarkdownNode(child))
+      .join(""),
+  );
+}
+
+function serializeInlineMarkdownNode(node: Node): string {
+  if (node.nodeType === Node.TEXT_NODE) {
+    return node.textContent || "";
+  }
+  if (node.nodeType !== Node.ELEMENT_NODE) {
+    return "";
+  }
+
+  const element = node as Element;
+  const tag = element.tagName.toLowerCase();
+  if (
+    element.matches(
+      "button,svg,nav,header,footer,textarea,input,select,option,[role='button'],[role='toolbar'],[aria-hidden='true'],[hidden]",
+    )
+  ) {
+    return "";
+  }
+  if (tag === "br") {
+    return "\n";
+  }
+  if (tag === "strong" || tag === "b") {
+    const text = serializeInlineMarkdown(element);
+    return text ? `**${text}**` : "";
+  }
+  if (tag === "em" || tag === "i") {
+    const text = serializeInlineMarkdown(element);
+    return text ? `*${text}*` : "";
+  }
+  if (tag === "code") {
+    const text = normalizeInlineMarkdownText(element.textContent || "");
+    return text ? `\`${text.replace(/`/g, "\\`")}\`` : "";
+  }
+  if (tag === "a") {
+    const text = serializeInlineMarkdown(element);
+    const href = element.getAttribute("href") || "";
+    return text && /^https?:\/\//i.test(href) ? `[${text}](${href})` : text;
+  }
+  if (/^(ul|ol|table|blockquote|pre|h[1-6])$/.test(tag)) {
+    return `\n${serializeMarkdownNode(element, 0)}\n`;
+  }
+  return getElementChildNodes(element)
+    .map((child) => serializeInlineMarkdownNode(child))
+    .join("");
+}
+
+function getElementChildNodes(element: Element): Node[] {
+  return Array.prototype.slice.call(element.childNodes).filter(Boolean) as Node[];
+}
+
+function getElementChildren(element: Element): Element[] {
+  return Array.prototype.slice.call(element.children).filter(Boolean) as Element[];
+}
+
+function normalizeInlineMarkdownText(value: string): string {
+  return value
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t\f\v]+/g, " ")
+    .replace(/\s+\n/g, "\n")
+    .replace(/\n\s+/g, "\n")
+    .trim();
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replace(/\|/g, "\\|").replace(/\n+/g, "<br>");
+}
+
+function cleanupSerializedMarkdown(value: string): string {
+  return value
+    .replace(/[ \t]+\n/g, "\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 function findWebChatComposer(doc: Document): HTMLElement | null {
@@ -2715,7 +3057,7 @@ async function runMCPBridgeRequest({
       request.toolName,
       request.arguments,
     );
-    const prompt = formatMCPBridgeResultPrompt(request, detailed.results);
+    const prompt = formatMCPBridgeResultPrompt(request, detailed);
     await deliverPrompt(
       prompt,
       `MCP ${request.toolName} result inserted into ${serviceLabel}.`,
@@ -2723,7 +3065,7 @@ async function runMCPBridgeRequest({
         kind: "mcp",
         sourcePrompt: prompt,
         subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} ${request.toolName} via ${serviceLabel}`,
-        title: `MCP answer: ${request.toolName}`,
+        title: `Zotero MCP result: ${request.toolName}`,
       },
     );
   } catch (error) {
@@ -2741,20 +3083,22 @@ async function runMCPBridgeRequest({
       kind: "mcp",
       sourcePrompt: prompt,
       subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} ${request.toolName} via ${serviceLabel}`,
-      title: `MCP answer: ${request.toolName}`,
+      title: `Zotero MCP error: ${request.toolName}`,
     });
   }
 }
 
 function formatMCPBridgeResultPrompt(
   request: MCPBridgeRequest,
-  results: MCPToolResultItem[],
+  result: MCPToolDetailedResult,
 ): string {
   const resultText =
-    formatMCPPromptContext(results, {
-      toolName: request.toolName,
+    formatMCPPromptContext(result.results, {
+      toolName: result.toolName || request.toolName,
       usedFallback: false,
-    }) || "MCP tool returned no structured or text content.";
+    }) ||
+    truncateText(result.text || safeJSONStringify(result.raw), MCP_CONTEXT_TEXT_LIMIT) ||
+    "MCP tool returned no structured or text content.";
   return [
     "Zotero WebAI MCP tool result:",
     `Tool: ${request.toolName}`,
@@ -2764,7 +3108,7 @@ function formatMCPBridgeResultPrompt(
     "",
     "Use this Zotero MCP result to continue answering the user's request. If another Zotero MCP tool is needed, emit a new ZOTERO_WEBAI_MCP_REQUEST block using the same active token and a schema-valid arguments object.",
     FINAL_ANSWER_FORMAT_INSTRUCTION,
-    "Do not repeat Tool, Arguments, raw JSON, MCP context, or Zotero WebAI bridge instructions in the final answer.",
+    "Final answer must summarize only the useful result for the user. Do not repeat Tool, Arguments, raw JSON, MCP context, bridge markers, or execution steps.",
   ].join("\n");
 }
 
@@ -2826,7 +3170,7 @@ function buildMCPPlanningContext(
     "Start marker: ZOTERO_WEBAI_MCP_REQUEST",
     "End marker: END_ZOTERO_WEBAI_MCP_REQUEST",
     `Required JSON fields inside the block: {"token":"${mcpBridgeToken}","id":"short-unique-id","tool":"tool_name","arguments":{...}}`,
-    "Use the inputSchema for each tool to decide parameter names and values. Keep write tools for explicit user requests that modify Zotero notes, tags, metadata, or items.",
+    "Use the inputSchema for each tool to decide parameter names and values. Prefer complete/standard modes and limit 1000 when available. For Zotero library search, prefer search_library with {q, limit:1000, mode:\"complete\", relevanceScoring:true, sort:\"relevance\"}; then use itemKey/key with get_item_details or get_content when the user needs abstracts, notes, attachments, or full text. Keep write tools for explicit user requests that modify Zotero notes, tags, metadata, or items.",
     catalog,
   ]
     .filter(Boolean)
@@ -2889,6 +3233,7 @@ function formatMCPPromptItem(
 ): string {
   const headerParts = [
     `${index + 1}. ${result.title?.trim() || "MCP result"}`,
+    result.key?.trim() ? `{key: ${result.key.trim()}}` : "",
     result.year?.trim() ? `(${result.year.trim()})` : "",
     result.source?.trim() ? `[${result.source.trim()}]` : "",
   ].filter(Boolean);
@@ -3610,7 +3955,7 @@ function formatMCPDetailedRecordBody(
       toolName: result.toolName,
       usedFallback: Boolean(options?.usedFallback),
     }) ||
-    result.text ||
+    truncateText(result.text || safeJSONStringify(result.raw), MCP_CONTEXT_TEXT_LIMIT) ||
     "MCP tool returned no structured or text content.";
   return [
     `Tool: ${result.toolName}`,
@@ -3921,13 +4266,14 @@ function appendHTMLToZoteroNote(existing: string, addition: string): string {
 }
 
 function formatRecordNoteHTML(record: WebAIExecutionRecord): string {
+  const body = formatMarkdownForDisplay(record.body);
   return [
     "<hr/>",
     `<h2>${escapeHTML(record.title)}</h2>`,
     `<p><strong>${escapeHTML(record.kind.toUpperCase())}</strong>${
       record.subtitle ? ` · ${escapeHTML(record.subtitle)}` : ""
     } · ${escapeHTML(formatRecordTimestamp(record.createdAt))}</p>`,
-    `<pre>${escapeHTML(record.body)}</pre>`,
+    `<pre>${escapeHTML(body)}</pre>`,
   ].join("");
 }
 
@@ -4077,6 +4423,12 @@ function stripAssistantWebNoise(value: string): string {
     .split(/\n/)
     .map((line) => line.trim())
     .filter((line) => line && !noiseLinePattern.test(line))
+    .filter(
+      (line) =>
+        !/^(deep think|thinking|reasoning|search|web search|copy|copied|share|regenerate|retry|stop generating|continue generating|continue|edit|delete|like|dislike|复制|已复制|分享|重新生成|重试|停止生成|继续生成|继续|编辑|删除|点赞|点踩|深度思考|推理过程|思考过程|智能搜索|联网搜索|搜索|给\s*(DeepSeek|Z\.ai)\s*发送消息)$/i.test(
+          line,
+        ),
+    )
     .join("\n")
     .replace(/\n{3,}/g, "\n\n")
     .trim();
@@ -4114,6 +4466,25 @@ function splitThinkingFromAnswer(value: string): AssistantCaptureParts {
       body: text.replace(/<think>[\s\S]*?<\/think>/gi, "").trim(),
       thinking: thinking || undefined,
     };
+  }
+
+  const openThinkIndex = text.search(/<\s*think\s*>/i);
+  if (openThinkIndex >= 0) {
+    const before = text.slice(0, openThinkIndex).trim();
+    const afterOpen = text.slice(openThinkIndex).replace(/<\s*think\s*>/i, "");
+    const finalAnswerMatch = afterOpen.match(
+      /(?:^|\n)\s*(?:最终答案|答案|回答|结果|结论|Answer|Final answer|Result|Response)\s*[:：]\s*/i,
+    );
+    if (finalAnswerMatch?.index !== undefined) {
+      const thinking = afterOpen.slice(0, finalAnswerMatch.index).trim();
+      const body = [
+        before,
+        afterOpen.slice(finalAnswerMatch.index + finalAnswerMatch[0].length).trim(),
+      ]
+        .filter(Boolean)
+        .join("\n\n");
+      return { body, thinking: thinking || undefined };
+    }
   }
 
   const splitBySections = splitInternalSectionsFromAnswer(text);
@@ -4165,12 +4536,22 @@ function splitInternalSectionsFromAnswer(value: string): AssistantCaptureParts {
 }
 
 function isInternalProcessHeading(value: string): boolean {
+  if (
+    /^(思考链|思考过程|推理过程|深度思考|运行代码|代码运行|运行过程|执行过程|工具调用|工具执行|中间步骤|过程|Reasoning|Thinking|Chain of thought|Running code|Code execution|Execution process|Tool call|Tool calls|Tool output|Intermediate steps?)\s*[:：]?$/i.test(
+      value,
+    )
+  ) {
+    return true;
+  }
   return /^(思考链|思考过程|推理过程|深度思考|运行代码|代码运行|运行过程|执行过程|工具调用|工具执行|中间步骤|过程|Reasoning|Thinking|Chain of thought|Running code|Code execution|Execution process|Tool call|Tool calls|Tool output|Intermediate steps?)\s*[:：]?$/i.test(
     value,
   );
 }
 
 function isFinalAnswerHeading(value: string): boolean {
+  if (/^(最终答案|答案|回答|结论|结果|正文|Answer|Final answer|Result|Response)\s*[:：]?$/i.test(value)) {
+    return true;
+  }
   return /^(最终答案|答案|回答|结论|结果|正文|Answer|Final answer|Result|Response)\s*[:：]?$/i.test(
     value,
   );
@@ -4190,6 +4571,16 @@ function looksLikePromptEcho(value: string): boolean {
   );
   const hasMCPJsonEcho =
     /"appliedModeConfig"|"pagination"|"searchTime"|"hasMore"/.test(text);
+  if (
+    /(^|\n)(用户消息|当前文献|论文内容|网页搜索上下文|User message|Zotero context|Paper content|MCP context|Web search context)[:：]/i.test(
+      text,
+    ) &&
+    /Final answer format|ZOTERO_WEBAI_MCP_REQUEST|Available Zotero MCP tools|Note: the paper text was truncated by Zotero WebAI/i.test(
+      text,
+    )
+  ) {
+    return true;
+  }
   return (hasPromptSections && (hasZoteroTruncation || hasMCPJsonEcho)) ||
     (hasPromptSections && text.length > 1200 && !/[。！？.!?]\s*\n/.test(text));
 }
@@ -4234,7 +4625,7 @@ function renderMarkdownContent(
   value: string,
   theme: SidebarTheme,
 ): React.ReactNode {
-  const blocks = parseMarkdownBlocks(value);
+  const blocks = parseMarkdownBlocks(formatMarkdownForDisplay(value));
   if (!blocks.length) {
     return null;
   }
@@ -4244,6 +4635,146 @@ function renderMarkdownContent(
       {blocks.map((block, index) => renderMarkdownBlock(block, index, theme))}
     </div>
   );
+}
+
+function formatMarkdownForDisplay(value: string): string {
+  const text = normalizeCapturedText(value);
+  if (!text) {
+    return "";
+  }
+  if (looksLikeReadableMarkdown(text)) {
+    return text;
+  }
+  return enrichPlainTextAsMarkdown(text)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+}
+
+function looksLikeReadableMarkdown(value: string): boolean {
+  const text = normalizeCapturedText(value);
+  if (!text) {
+    return false;
+  }
+  return (
+    /(^|\n)\s*(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s+|```|\$\$)/.test(text) ||
+    /\|.+\|\s*\n\s*\|[-:\s|]+\|/.test(text)
+  );
+}
+
+function enrichPlainTextAsMarkdown(value: string): string {
+  let formatted = normalizeCapturedText(value).replace(/[ \t]{2,}/g, " ");
+  formatted = promoteDenseOrdinalHeadings(formatted);
+  formatted = promoteSummaryHeading(formatted);
+  formatted = promoteInlineLabelsToBullets(formatted);
+  formatted = splitLongPlainParagraphs(formatted);
+  return formatted;
+}
+
+function promoteDenseOrdinalHeadings(value: string): string {
+  const cjkOrdinal =
+    "\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341";
+  const headingPattern = new RegExp(
+    `(^|[\\s\\u3002\\uff01\\uff1f!?;\\uff1b])((?:[${cjkOrdinal}]+\\u3001|[\\uff08(][${cjkOrdinal}]+[\\uff09)]))\\s*([^\\n\\u3002\\uff01\\uff1f!?;\\uff1b:：]{1,34}?)[\\uff1a:]\\s*`,
+    "g",
+  );
+  return value.replace(
+    headingPattern,
+    (match: string, prefix: string, marker: string, title: string) => {
+      const lead = prefix && /\S/.test(prefix) ? `${prefix.trim()}\n\n` : "\n\n";
+      const spacer = marker.endsWith("\u3001") ? "" : " ";
+      return `${lead}## ${marker}${spacer}${title.trim()}\n\n`;
+    },
+  );
+}
+
+function promoteSummaryHeading(value: string): string {
+  const summaryPattern =
+    /([\u3002\uff01\uff1f!?])\s*((?:\u7efc\u4e0a\u6240\u8ff0|\u603b\u4e4b|\u56e0\u6b64)[\uff0c,])/g;
+  return value.replace(
+    summaryPattern,
+    (match: string, prefix: string, summaryLead: string) =>
+      `${prefix}\n\n## \u603b\u7ed3\n\n${summaryLead}`,
+  );
+}
+
+function promoteInlineLabelsToBullets(value: string): string {
+  const labelPattern =
+    /(^|[\n\u3002\uff01\uff1f\uff1b;!?])\s*([\u3400-\u9fffA-Za-z][\u3400-\u9fffA-Za-z0-9\uff08\uff09()\/\-.\s]{1,26})[\uff1a:]\s*/g;
+  return value.replace(
+    labelPattern,
+    (match: string, prefix: string, label: string) => {
+      const normalizedLabel = normalizeInlineLabel(label);
+      if (!shouldPromoteInlineLabel(normalizedLabel)) {
+        return match;
+      }
+      const lead = prefix && /\S/.test(prefix) ? `${prefix}\n` : "\n";
+      return `${lead}- **${normalizedLabel}\uFF1A** `;
+    },
+  );
+}
+
+function normalizeInlineLabel(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function shouldPromoteInlineLabel(label: string): boolean {
+  if (label.length < 2 || label.length > 26) {
+    return false;
+  }
+  if (/[,\uFF0C\u3002\uFF01\uFF1F!?;\uFF1B:\uFF1A]/.test(label)) {
+    return false;
+  }
+  if (
+    /^(query|tool|arguments|command|user message|metadata|source|url|doi|pmid|arxiv|json|xml)$/i.test(
+      label,
+    )
+  ) {
+    return false;
+  }
+  if (/\d$|\d{2,}/.test(label)) {
+    return false;
+  }
+  const cjkMatches = label.match(/[\u3400-\u9fff]/g) || [];
+  return cjkMatches.length >= 2 || /^[A-Za-z][A-Za-z /.-]{2,26}$/.test(label);
+}
+
+function splitLongPlainParagraphs(value: string): string {
+  return value
+    .split(/\n{2,}/)
+    .map((paragraph) => splitLongPlainParagraph(paragraph.trim()))
+    .filter(Boolean)
+    .join("\n\n");
+}
+
+function splitLongPlainParagraph(paragraph: string): string {
+  if (
+    paragraph.length < 280 ||
+    /^(#{1,6}\s+|[-*+]\s+|\d+[.)]\s+|>\s+|```|\$\$)/.test(paragraph)
+  ) {
+    return paragraph;
+  }
+
+  const sentences =
+    paragraph.match(/[^\u3002\uff01\uff1f!?]+[\u3002\uff01\uff1f!?]?/g) || [];
+  const cleanSentences = sentences.map((sentence) => sentence.trim()).filter(Boolean);
+  if (cleanSentences.length <= 1) {
+    return paragraph;
+  }
+
+  const groups: string[] = [];
+  let current = "";
+  cleanSentences.forEach((sentence) => {
+    if (current && current.length + sentence.length > 220) {
+      groups.push(current);
+      current = sentence;
+      return;
+    }
+    current = current ? `${current} ${sentence}` : sentence;
+  });
+  if (current) {
+    groups.push(current);
+  }
+  return groups.join("\n\n");
 }
 
 function parseMarkdownBlocks(value: string): MarkdownBlock[] {
@@ -4328,23 +4859,68 @@ function parseMarkdownBlocks(value: string): MarkdownBlock[] {
       continue;
     }
 
+    if (isMarkdownTableStart(lines, index)) {
+      flushParagraph();
+      const tableLines: string[] = [];
+      while (index < lines.length && isMarkdownTableLine(lines[index] || "")) {
+        tableLines.push(lines[index] || "");
+        index += 1;
+      }
+      const table = parseMarkdownTable(tableLines);
+      if (table) {
+        blocks.push(table);
+      }
+      continue;
+    }
+
     const unorderedMatch = line.match(/^[-*+]\s+(.+)$/);
     const orderedMatch = line.match(/^\d+[.)]\s+(.+)$/);
     if (unorderedMatch || orderedMatch) {
       flushParagraph();
       const ordered = Boolean(orderedMatch);
-      const items: string[] = [];
+      const items: MarkdownListItem[] = [];
+      let currentItem: MarkdownListItem | null = null;
+      const pushCurrentItem = () => {
+        if (currentItem?.text.trim()) {
+          items.push({
+            level: currentItem.level,
+            text: currentItem.text.trim(),
+          });
+        }
+        currentItem = null;
+      };
       while (index < lines.length) {
-        const current = (lines[index] || "").trim();
-        const match = ordered
-          ? current.match(/^\d+[.)]\s+(.+)$/)
-          : current.match(/^[-*+]\s+(.+)$/);
-        if (!match) {
+        const currentRaw = lines[index] || "";
+        const current = currentRaw.trim();
+        if (!current) {
           break;
         }
-        items.push(match[1].trim());
+        const match = ordered
+          ? currentRaw.match(/^(\s*)\d+[.)]\s+(.+)$/)
+          : currentRaw.match(/^(\s*)[-*+]\s+(.+)$/);
+        if (match) {
+          pushCurrentItem();
+          currentItem = {
+            level: Math.floor((match[1] || "").replace(/\t/g, "  ").length / 2),
+            text: match[2].trim(),
+          };
+          index += 1;
+          continue;
+        }
+        if (isMarkdownBlockBoundary(current)) {
+          break;
+        }
+        if (currentItem) {
+          currentItem.text = `${currentItem.text}\n${currentRaw.trim()}`;
+        } else {
+          currentItem = {
+            level: 0,
+            text: currentRaw.trim(),
+          };
+        }
         index += 1;
       }
+      pushCurrentItem();
       blocks.push({ items, ordered, type: "list" });
       continue;
     }
@@ -4366,6 +4942,66 @@ function parseMarkdownBlocks(value: string): MarkdownBlock[] {
 
   flushParagraph();
   return blocks;
+}
+
+function isMarkdownBlockBoundary(line: string): boolean {
+  return /^(#{1,6}\s+|```|\$\$|>\s+)/.test(line) || isMarkdownTableLine(line);
+}
+
+function isMarkdownTableStart(lines: string[], index: number): boolean {
+  return (
+    isMarkdownTableLine(lines[index] || "") &&
+    Boolean((lines[index + 1] || "").match(/^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$/))
+  );
+}
+
+function isMarkdownTableLine(line: string): boolean {
+  const trimmed = line.trim();
+  return trimmed.includes("|") && /^\|?.+\|.+\|?$/.test(trimmed);
+}
+
+function parseMarkdownTable(lines: string[]): MarkdownBlock | null {
+  if (lines.length < 2) {
+    return null;
+  }
+  const rows = lines
+    .filter((line, index) => index !== 1)
+    .map(splitMarkdownTableRow)
+    .filter((row) => row.length);
+  if (!rows.length) {
+    return null;
+  }
+  return {
+    headers: rows[0],
+    rows: rows.slice(1),
+    type: "table",
+  };
+}
+
+function splitMarkdownTableRow(line: string): string[] {
+  const trimmed = line.trim().replace(/^\|/, "").replace(/\|$/, "");
+  const cells: string[] = [];
+  let current = "";
+  let escaped = false;
+  for (const character of trimmed) {
+    if (escaped) {
+      current += character;
+      escaped = false;
+      continue;
+    }
+    if (character === "\\") {
+      escaped = true;
+      continue;
+    }
+    if (character === "|") {
+      cells.push(current.trim());
+      current = "";
+      continue;
+    }
+    current += character;
+  }
+  cells.push(current.trim());
+  return cells;
 }
 
 function renderMarkdownBlock(
@@ -4398,11 +5034,64 @@ function renderMarkdownBlock(
     return (
       <ListTag key={key} style={styles.markdownList}>
         {block.items.map((item, itemIndex) => (
-          <li key={`${key}-item-${itemIndex}`} style={styles.markdownListItem}>
-            {renderInlineMarkdown(item, `${key}-item-${itemIndex}`, theme)}
+          <li
+            key={`${key}-item-${itemIndex}`}
+            style={{
+              ...styles.markdownListItem,
+              marginLeft: item.level ? `${item.level * 18}px` : 0,
+            }}
+          >
+            {renderInlineMarkdown(item.text, `${key}-item-${itemIndex}`, theme)}
           </li>
         ))}
       </ListTag>
+    );
+  }
+  if (block.type === "table") {
+    return (
+      <div key={key} style={styles.markdownTableWrapper}>
+        <table style={styles.markdownTable}>
+          <thead>
+            <tr>
+              {block.headers.map((header, headerIndex) => (
+                <th
+                  key={`${key}-head-${headerIndex}`}
+                  style={{
+                    ...styles.markdownTableHeader,
+                    background: theme.inputBackground,
+                    borderColor: theme.softBorder,
+                    color: theme.text,
+                  }}
+                >
+                  {renderInlineMarkdown(header, `${key}-head-${headerIndex}`, theme)}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {block.rows.map((row, rowIndex) => (
+              <tr key={`${key}-row-${rowIndex}`}>
+                {block.headers.map((_, cellIndex) => (
+                  <td
+                    key={`${key}-cell-${rowIndex}-${cellIndex}`}
+                    style={{
+                      ...styles.markdownTableCell,
+                      borderColor: theme.softBorder,
+                      color: theme.text,
+                    }}
+                  >
+                    {renderInlineMarkdown(
+                      row[cellIndex] || "",
+                      `${key}-cell-${rowIndex}-${cellIndex}`,
+                      theme,
+                    )}
+                  </td>
+                ))}
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     );
   }
   if (block.type === "blockquote") {
@@ -4673,15 +5362,26 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "6px",
     display: "flex",
     flex: "1 1 560px",
+    maxHeight: "82vh",
+    maxWidth: "100%",
     minHeight: "420px",
-    minWidth: 0,
-    overflow: "hidden",
+    minWidth: "280px",
+    overflow: "auto",
+    resize: "both",
+  },
+  readerFrameHost: {
+    flex: "0 0 auto",
+    height: "220px",
+    maxHeight: "70vh",
+    minHeight: "180px",
+    resize: "both",
   },
   frameHostCollapsed: {
     display: "none",
   },
   loginFrameHost: {
     flex: "1 1 auto",
+    maxHeight: "none",
     minHeight: 0,
   },
   loginModeBar: {
@@ -4773,11 +5473,18 @@ const styles: Record<string, React.CSSProperties> = {
     height: "430px",
     maxHeight: "78vh",
     minHeight: "260px",
-    minWidth: 0,
-    overflow: "hidden",
+    minWidth: "280px",
+    overflow: "auto",
     padding: "10px",
-    resize: "vertical",
+    resize: "both",
     width: "100%",
+  },
+  readerExecutionPanel: {
+    flex: "1 1 auto",
+    height: "560px",
+    maxHeight: "none",
+    minHeight: "280px",
+    resize: "both",
   },
   executionHeader: {
     alignItems: "center",
@@ -4817,13 +5524,17 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "8px",
     boxSizing: "border-box",
     display: "flex",
-    flex: "0 0 250px",
+    flex: "0 0 auto",
     flexDirection: "column",
     gap: "8px",
-    maxWidth: "36%",
+    maxHeight: "100%",
+    maxWidth: "72%",
     minHeight: 0,
-    minWidth: "220px",
+    minWidth: "180px",
+    overflow: "auto",
     padding: "8px",
+    resize: "both",
+    width: "250px",
   },
   historyHeader: {
     alignItems: "center",
@@ -4883,10 +5594,13 @@ const styles: Record<string, React.CSSProperties> = {
     flex: "1 1 auto",
     flexDirection: "column",
     gap: "18px",
+    maxHeight: "100%",
+    maxWidth: "100%",
     minWidth: 0,
     minHeight: 0,
     overflow: "auto",
     padding: "4px 8px 12px",
+    resize: "both",
   },
   emptyConversation: {
     alignItems: "center",
@@ -4925,17 +5639,25 @@ const styles: Record<string, React.CSSProperties> = {
     boxSizing: "border-box",
     maxWidth: "78%",
     minWidth: "160px",
+    overflow: "auto",
     padding: "13px 16px",
+    resize: "both",
+    MozUserSelect: "text",
     userSelect: "text",
   },
   assistantBubble: {
     border: "1px solid #e2e2e2",
     borderRadius: "14px",
     boxSizing: "border-box",
-    maxWidth: "94%",
+    maxWidth: "100%",
+    minHeight: "80px",
     minWidth: "220px",
+    overflow: "auto",
     padding: "14px 16px",
+    resize: "both",
+    MozUserSelect: "text",
     userSelect: "text",
+    width: "100%",
   },
   messageHeader: {
     alignItems: "center",
@@ -4959,6 +5681,7 @@ const styles: Record<string, React.CSSProperties> = {
   userMessageBody: {
     fontSize: typography.body,
     lineHeight: 1.58,
+    MozUserSelect: "text",
     overflowWrap: "anywhere",
     userSelect: "text",
     whiteSpace: "normal",
@@ -5020,11 +5743,12 @@ const styles: Record<string, React.CSSProperties> = {
     border: 0,
     fontFamily: "inherit",
     fontSize: typography.body,
-    lineHeight: 1.64,
-    margin: "8px 0 0",
+    lineHeight: 1.72,
+    margin: "10px 0 0",
     maxHeight: "none",
     overflow: "auto",
     padding: 0,
+    MozUserSelect: "text",
     userSelect: "text",
     whiteSpace: "normal",
     wordBreak: "break-word",
@@ -5032,40 +5756,67 @@ const styles: Record<string, React.CSSProperties> = {
   markdownRoot: {
     display: "flex",
     flexDirection: "column",
-    gap: "8px",
+    gap: "10px",
     minWidth: 0,
+    MozUserSelect: "text",
     userSelect: "text",
     width: "100%",
   },
   markdownParagraph: {
-    lineHeight: 1.64,
-    margin: 0,
+    lineHeight: 1.72,
+    margin: "0 0 2px",
     overflowWrap: "anywhere",
     whiteSpace: "normal",
     wordBreak: "break-word",
   },
   markdownHeading: {
     fontWeight: 700,
-    lineHeight: 1.35,
-    margin: "2px 0 0",
+    lineHeight: 1.38,
+    margin: "6px 0 1px",
     overflowWrap: "anywhere",
     wordBreak: "break-word",
   },
   markdownList: {
-    lineHeight: 1.6,
-    margin: 0,
+    lineHeight: 1.68,
+    margin: "0 0 2px",
     paddingInlineStart: "22px",
   },
   markdownListItem: {
-    margin: "2px 0",
+    margin: "5px 0",
     overflowWrap: "anywhere",
     wordBreak: "break-word",
   },
+  markdownTableWrapper: {
+    maxWidth: "100%",
+    overflow: "auto",
+  },
+  markdownTable: {
+    borderCollapse: "collapse",
+    fontSize: typography.meta,
+    lineHeight: 1.55,
+    minWidth: "100%",
+    tableLayout: "auto",
+  },
+  markdownTableHeader: {
+    border: "1px solid #e0e0e0",
+    fontWeight: 700,
+    padding: "6px 8px",
+    textAlign: "left",
+    verticalAlign: "top",
+    whiteSpace: "normal",
+  },
+  markdownTableCell: {
+    border: "1px solid #e0e0e0",
+    padding: "6px 8px",
+    textAlign: "left",
+    verticalAlign: "top",
+    whiteSpace: "normal",
+  },
   markdownBlockquote: {
     borderLeft: "3px solid #d6e5f4",
-    lineHeight: 1.55,
+    lineHeight: 1.65,
     margin: 0,
-    padding: "2px 0 2px 10px",
+    padding: "4px 0 4px 10px",
     whiteSpace: "pre-wrap",
   },
   markdownCodeBlock: {
@@ -5170,8 +5921,12 @@ const styles: Record<string, React.CSSProperties> = {
     flex: "0 0 auto",
     flexDirection: "column",
     gap: "8px",
+    minHeight: "180px",
+    minWidth: "260px",
+    overflow: "auto",
     padding: "11px 12px 10px",
     position: "relative",
+    resize: "both",
   },
   slashMenu: {
     border: "1px solid #e0e0e0",
@@ -5252,7 +6007,7 @@ const styles: Record<string, React.CSSProperties> = {
     minHeight: "108px",
     outline: "none",
     padding: "2px 0 4px",
-    resize: "vertical",
+    resize: "both",
     width: "100%",
   },
   composerFooter: {

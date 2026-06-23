@@ -1,8 +1,9 @@
 import type { Settings } from "./settingsManager";
 
 const DEFAULT_MCP_SEARCH_ARGUMENTS_TEMPLATE =
-  '{"q":"{{query}}","limit":1000,"mode":"preview"}';
+  '{"q":"{{query}}","limit":1000,"mode":"complete","relevanceScoring":true,"sort":"relevance"}';
 const DEFAULT_MCP_SEARCH_LIMIT = 1000;
+const DEFAULT_MCP_RICH_MODE = "complete";
 
 export interface MCPToolSummary {
   description?: string;
@@ -12,6 +13,7 @@ export interface MCPToolSummary {
 
 export interface MCPToolResultItem {
   content?: string;
+  key?: string;
   source?: string;
   title?: string;
   url?: string;
@@ -90,9 +92,12 @@ export async function callMCPTool(
   });
   const result = await sendMCPRequest(context, "tools/call", {
     name: toolName,
-    arguments: buildToolArguments(
-      settings.mcpToolArgumentsTemplate || "",
-      query,
+    arguments: normalizeMCPToolArguments(
+      toolName,
+      buildToolArguments(
+        settings.mcpToolArgumentsTemplate || "",
+        query,
+      ) as Record<string, unknown>,
     ),
   });
   return normalizeToolResult(result, toolName);
@@ -124,7 +129,7 @@ export async function callMCPToolDetailed(
   });
   const result = await sendMCPRequest(context, "tools/call", {
     name: normalizedToolName,
-    arguments: toolArguments,
+    arguments: normalizeMCPToolArguments(normalizedToolName, toolArguments),
   });
   return normalizeDetailedToolResult(result, normalizedToolName);
 }
@@ -317,10 +322,67 @@ export function buildMCPToolArgumentsTemplate(
     args[limitKey] = DEFAULT_MCP_SEARCH_LIMIT;
   }
   if (properties.mode) {
-    args.mode = "preview";
+    args.mode = pickSchemaMode(properties.mode);
+  }
+  if (properties.relevanceScoring) {
+    args.relevanceScoring = true;
+  }
+  if (properties.sort) {
+    args.sort = "relevance";
   }
 
   return JSON.stringify(args);
+}
+
+function normalizeMCPToolArguments(
+  toolName: string,
+  toolArguments: Record<string, unknown>,
+): Record<string, unknown> {
+  const args = { ...toolArguments };
+  const name = toolName.toLowerCase();
+  if (/\b(search_library|search_fulltext|search_annotations|get_annotations|get_item_details|get_content|get_collections)\b/.test(name)) {
+    const currentMode = String(args.mode || "").trim().toLowerCase();
+    if (!currentMode || currentMode === "minimal" || currentMode === "preview") {
+      args.mode = DEFAULT_MCP_RICH_MODE;
+    }
+  }
+
+  const limitKey = ["limit", "maxResults", "max_results", "topK", "top_k"].find(
+    (key) => key in args,
+  );
+  if (limitKey) {
+    const currentLimit = Number(args[limitKey]);
+    if (!Number.isFinite(currentLimit) || currentLimit < DEFAULT_MCP_SEARCH_LIMIT) {
+      args[limitKey] = DEFAULT_MCP_SEARCH_LIMIT;
+    }
+  } else if (/\b(search_library|search_fulltext|search_annotations|get_annotations|get_libraries|get_collections|search_collections|semantic_search|fulltext_database)\b/.test(name)) {
+    args.limit = DEFAULT_MCP_SEARCH_LIMIT;
+  }
+
+  if (name === "search_library") {
+    args.relevanceScoring = args.relevanceScoring ?? true;
+    args.sort = args.sort || "relevance";
+  }
+
+  if (name === "search_fulltext" && !("contextLength" in args)) {
+    args.contextLength = 1200;
+  }
+
+  return args;
+}
+
+function pickSchemaMode(modeSchema: unknown): string {
+  const schema = normalizeObjectRecord(modeSchema);
+  const enumValues = Array.isArray(schema?.enum)
+    ? schema.enum.map((value) => String(value))
+    : [];
+  if (enumValues.includes("complete")) {
+    return "complete";
+  }
+  if (enumValues.includes("standard")) {
+    return "standard";
+  }
+  return DEFAULT_MCP_RICH_MODE;
 }
 
 function getSchemaTextInputKey(schemaValue: unknown): string | null {
@@ -611,7 +673,26 @@ function parseTextItems(text: string): MCPToolResultItem[] {
     return [];
   }
   try {
-    return normalizeStructuredItems(JSON.parse(text));
+    const parsed = JSON.parse(text);
+    const parsedItems = normalizeStructuredItems(parsed);
+    if (parsedItems.length > 0) {
+      return parsedItems;
+    }
+    const parsedRecord = normalizeObjectRecord(parsed);
+    if (parsedRecord) {
+      const nested = [
+        parsedRecord.data,
+        parsedRecord.result,
+        parsedRecord.structuredContent,
+      ];
+      for (const value of nested) {
+        const nestedItems = normalizeStructuredItems(value);
+        if (nestedItems.length > 0) {
+          return nestedItems;
+        }
+      }
+    }
+    return [];
   } catch {
     return [];
   }
@@ -622,13 +703,47 @@ function normalizeResultRecord(value: unknown): MCPToolResultItem | null {
     return null;
   }
   const record = value as Record<string, unknown>;
+  const content = buildResultContent(record);
   return {
-    content: String(record.content || record.snippet || record.text || ""),
+    content,
+    key: String(record.key || record.itemKey || record.id || ""),
     source: String(record.source || record.provider || "MCP"),
     title: String(record.title || record.name || "MCP result"),
     url: String(record.url || record.link || ""),
     year: String(record.year || record.date || ""),
   };
+}
+
+function buildResultContent(record: Record<string, unknown>): string {
+  const directText = String(record.content || record.snippet || record.text || "").trim();
+  if (directText) {
+    return directText;
+  }
+
+  const lines = [
+    record.key || record.itemKey || record.id ? `Key: ${record.key || record.itemKey || record.id}` : "",
+    record.creators || record.authors ? `Creators: ${stringifyCompact(record.creators || record.authors)}` : "",
+    record.publicationTitle || record.journal ? `Publication: ${record.publicationTitle || record.journal}` : "",
+    record.abstractNote || record.abstract ? `Abstract: ${record.abstractNote || record.abstract}` : "",
+    record.relevanceScore !== undefined ? `Relevance score: ${record.relevanceScore}` : "",
+    record.matchedFields ? `Matched fields: ${stringifyCompact(record.matchedFields)}` : "",
+    record.attachments ? `Attachments: ${stringifyCompact(record.attachments)}` : "",
+    record.tags ? `Tags: ${stringifyCompact(record.tags)}` : "",
+    record.DOI || record.doi ? `DOI: ${record.DOI || record.doi}` : "",
+  ].filter(Boolean);
+
+  return lines.join("\n");
+}
+
+function stringifyCompact(value: unknown): string {
+  if (typeof value === "string") {
+    return value;
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
 }
 
 function extractContentText(content: unknown): string {

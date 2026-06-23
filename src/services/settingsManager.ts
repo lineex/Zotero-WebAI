@@ -24,7 +24,7 @@ export interface PersistedSettings {
 export type Settings = PersistedSettings;
 
 export const DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE =
-  '{"q":"{{query}}","limit":1000,"mode":"preview"}';
+  '{"q":"{{query}}","limit":1000,"mode":"complete","relevanceScoring":true,"sort":"relevance"}';
 export const DEFAULT_MCP_ENDPOINT = "http://127.0.0.1:23120/mcp";
 
 export const DEFAULT_SETTINGS: Settings = {

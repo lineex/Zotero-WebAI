@@ -16,6 +16,10 @@ import {
 } from "./sidebarSection";
 import { registerSidebarRefreshHandler } from "./sidebarRuntime";
 import { typography } from "./typography";
+import {
+  cleanupReaderWebAIPanelsForWindow,
+  type ReaderWebAIReaderLike,
+} from "../modules/readerWebAIPanel";
 
 interface ItemMessagePaneLike extends HTMLElement {
   renderCustomHead?(
@@ -44,10 +48,6 @@ interface ContextPaneLike {
 const SECTION_PANE_ID = "ai-assistant-sidebar";
 const LIBRARY_HOST_ID = "ai-assistant-pane-library-mount";
 const READER_HOST_ID = "ai-assistant-pane-reader-mount";
-const TAB_BAR_ACTION_HOST_ID = "zotero-webai-tabbar-actions";
-const TAB_BAR_ACTION_HOST_CLASS = "zotero-webai-tabbar-actions";
-const TAB_BAR_BUTTON_ID = "zotero-webai-tabbar-button";
-const TAB_BAR_BUTTON_CLASS = "zotero-webai-tabbar-button";
 const FOCUS_MODE_CLASS = "zotero-webai-focus-mode";
 const FOCUS_SECTION_CLASS = "zotero-webai-focus-section";
 const LEGACY_STANDALONE_ARTIFACT_IDS = [
@@ -72,11 +72,8 @@ const windowLibraryEmptyStateRetryBudget = new WeakMap<
   number
 >();
 const windowReaderSectionWasExpanded = new WeakMap<Window, boolean>();
-const windowTabBarButtonRetryTimer = new WeakMap<Window, number>();
-const windowTabBarButtonRetryBudget = new WeakMap<Window, number>();
 const BRANDED_SECTION_ICON =
   `chrome://${config.addonRef}/content/icons/icon-20.png`;
-const HTML_NS = "http://www.w3.org/1999/xhtml";
 
 let sectionRegistered = false;
 let reactDomClientPromise: Promise<typeof import("react-dom/client")> | null =
@@ -86,10 +83,10 @@ export class UIFactory {
   static registerChatPanel(win: Window) {
     this.removeLegacyStandaloneArtifacts(win);
     this.registerSection();
+    this.removeTabBarButton(win);
+    this.clearWebAIFocusMode(win);
     this.ensureWindowRefreshRegistration(win);
     this.ensureTabSelectionRefreshRegistration(win);
-    this.ensureTabBarButton(win);
-    this.refreshWindow(win);
   }
 
   static removeChatPanel(win: Window) {
@@ -108,7 +105,6 @@ export class UIFactory {
     this.clearLibraryEmptyStateRetryTimer(win);
     this.clearTabBarButtonRetryTimer(win);
     windowLibraryEmptyStateRetryBudget.delete(win);
-    windowTabBarButtonRetryBudget.delete(win);
     windowReaderSectionWasExpanded.delete(win);
     this.renderLibraryEmptyStateHead(win, false);
     this.removeTabSelectionRefreshRegistration(win);
@@ -116,12 +112,13 @@ export class UIFactory {
     windowRefreshCleanup.delete(win);
     windowSectionRefresh.delete(win);
     this.removeTabBarButton(win);
+    cleanupReaderWebAIPanelsForWindow(win);
     this.clearWebAIFocusMode(win);
     this.removeLegacyStandaloneArtifacts(win);
   }
 
   static refreshWindow(win: Window) {
-    this.ensureTabBarButton(win);
+    this.removeTabBarButton(win);
     void this.requestSectionRefresh(win);
     this.syncLibraryEmptyStateHost(win);
   }
@@ -142,13 +139,17 @@ export class UIFactory {
     }
 
     if (sectionRegistered) {
-      try {
-        Zotero.ItemPaneManager.unregisterSection(SECTION_PANE_ID);
-      } catch {
-        // Ignore unregister failures during shutdown.
-      }
-      sectionRegistered = false;
+      this.unregisterLegacySection();
     }
+  }
+
+  private static unregisterLegacySection(): void {
+    try {
+      Zotero.ItemPaneManager.unregisterSection(SECTION_PANE_ID);
+    } catch {
+      // Ignore unregister failures while moving the UI out of the item pane.
+    }
+    sectionRegistered = false;
   }
 
   private static registerSection() {
@@ -315,197 +316,16 @@ export class UIFactory {
     win.__aiAssistantTabObserverId = null;
   }
 
-  private static ensureTabBarButton(win: Window): boolean {
-    const existing = win.document.getElementById(TAB_BAR_BUTTON_ID);
-    const host = this.findOrCreateTabBarButtonHost(win);
-    if (existing && host && existing.parentElement !== host) {
-      host.appendChild(existing);
-    }
-    if (existing && host) {
-      return true;
-    }
-    if (!host) {
-      this.scheduleTabBarButtonRetry(win);
-      return false;
-    }
-
-    this.clearTabBarButtonRetryTimer(win);
-    windowTabBarButtonRetryBudget.delete(win);
-
-    const button = this.createTabBarButton(win);
-    host.appendChild(button);
-    return true;
-  }
-
-  private static createTabBarButton(win: Window): HTMLElement {
-    const doc = win.document as Document & {
-      createXULElement?: (tagName: string) => HTMLElement;
-    };
-    const button = (doc.createXULElement?.("toolbarbutton") ??
-      doc.createElement("button")) as HTMLElement;
-    const title = "Open Zotero WebAI sidebar";
-
-    button.id = TAB_BAR_BUTTON_ID;
-    button.className = TAB_BAR_BUTTON_CLASS;
-    button.setAttribute("aria-label", title);
-    button.setAttribute("data-pane-id", SECTION_PANE_ID);
-    button.setAttribute("title", title);
-    button.setAttribute("type", "button");
-
-    const icon = doc.createElementNS(HTML_NS, "img");
-    icon.setAttribute("alt", "");
-    icon.setAttribute("src", BRANDED_SECTION_ICON);
-    button.appendChild(icon);
-
-    button.addEventListener("click", () => {
-      void this.openSidebarFromTabBarButton(win);
-    });
-
-    return button;
-  }
-
-  private static findOrCreateTabBarButtonHost(win: Window): HTMLElement | null {
-    const doc = win.document as Document & {
-      createXULElement?: (tagName: string) => HTMLElement;
-    };
-    const existing = doc.getElementById(
-      TAB_BAR_ACTION_HOST_ID,
-    ) as HTMLElement | null;
-    const tabBar = this.findTabBarElement(doc);
-    if (!tabBar) {
-      return existing;
-    }
-
-    const parent = this.resolveTabBarActionParent(tabBar);
-    this.decorateTabBarActionParent(parent);
-    if (existing) {
-      existing.style.marginInlineStart = "auto";
-      existing.style.order = "2147483647";
-      if (existing.parentElement !== parent && existing !== parent) {
-        parent.appendChild(existing);
-      }
-      return existing;
-    }
-
-    const host = (doc.createXULElement?.("hbox") ??
-      doc.createElementNS(HTML_NS, "div")) as HTMLElement;
-    host.id = TAB_BAR_ACTION_HOST_ID;
-    host.className = TAB_BAR_ACTION_HOST_CLASS;
-    host.setAttribute("data-pane-id", SECTION_PANE_ID);
-    host.setAttribute("align", "center");
-    host.style.marginInlineStart = "auto";
-    host.style.order = "2147483647";
-
-    if (parent === tabBar) {
-      tabBar.appendChild(host);
-    } else {
-      parent.appendChild(host);
-    }
-    return host;
-  }
-
-  private static decorateTabBarActionParent(parent: HTMLElement): void {
-    const computedDisplay = parent.ownerDocument?.defaultView
-      ?.getComputedStyle(parent)
-      ?.display;
-    if (!computedDisplay || computedDisplay === "block") {
-      parent.style.display = "flex";
-    }
-    parent.style.alignItems = parent.style.alignItems || "center";
-    parent.style.minWidth = parent.style.minWidth || "0";
-  }
-
-  private static resolveTabBarActionParent(tabBar: HTMLElement): HTMLElement {
-    const parent = tabBar.parentElement as HTMLElement | null;
-    if (!parent) {
-      return tabBar;
-    }
-    const id = `${tabBar.id || ""}`.toLowerCase();
-    const className = `${tabBar.className || ""}`.toLowerCase();
-    const role = `${tabBar.getAttribute("role") || ""}`.toLowerCase();
-    if (id.includes("toolbar") || className.includes("toolbar")) {
-      return tabBar;
-    }
-    if (role === "tablist" || id.includes("tabs")) {
-      return parent;
-    }
-    return tabBar;
-  }
-
-  private static findTabBarElement(doc: Document): HTMLElement | null {
-    const selectors = [
-      "#zotero-tabs-toolbar .zotero-tabs",
-      "#zotero-tabs-toolbar [role='tablist']",
-      "#zotero-tabs-toolbar .tabbrowser-tabs",
-      "#zotero-tabs-toolbar .tabs",
-      "#tab-bar-container [role='tablist']",
-      "#tab-bar-container .zotero-tabs",
-      "#tab-bar-container",
-      "#tabs-container [role='tablist']",
-      "#tabs-container .zotero-tabs",
-      "#tabs-container",
-      "#zotero-tabs-wrapper",
-      "#zotero-tabs-container",
-      "#zotero-tabs-toolbar",
-      "#zotero-tabs",
-      "#zotero-tab-bar",
-      "#zotero-tabbar",
-      "#tabs-toolbar",
-      ".zotero-tabs-toolbar",
-      ".zotero-tabbar",
-      ".zotero-tabs",
-      ".tabbrowser-tabs",
-      ".tabs-toolbar",
-      '[role="tablist"]',
-    ];
-
-    for (const selector of selectors) {
-      try {
-        const match = doc.querySelector(selector) as HTMLElement | null;
-        if (match) {
-          return match;
-        }
-      } catch {
-        // Zotero's chrome document can include XUL elements with partial selector support.
-      }
-    }
-
-    return null;
-  }
-
-  private static scheduleTabBarButtonRetry(win: Window): void {
-    if (windowTabBarButtonRetryTimer.has(win)) {
-      return;
-    }
-
-    const retries = windowTabBarButtonRetryBudget.get(win) ?? 0;
-    if (retries >= 80) {
-      return;
-    }
-    windowTabBarButtonRetryBudget.set(win, retries + 1);
-
-    const timer = win.setTimeout(() => {
-      windowTabBarButtonRetryTimer.delete(win);
-      this.ensureTabBarButton(win);
-    }, 200);
-    windowTabBarButtonRetryTimer.set(win, timer);
-  }
-
   private static clearTabBarButtonRetryTimer(win: Window): void {
-    const retryTimer = windowTabBarButtonRetryTimer.get(win);
-    if (retryTimer == null) {
-      return;
-    }
-
-    win.clearTimeout(retryTimer);
-    windowTabBarButtonRetryTimer.delete(win);
+    void win;
   }
 
   private static removeTabBarButton(win: Window): void {
-    win.document.getElementById(TAB_BAR_BUTTON_ID)?.remove();
+    win.document.getElementById("zotero-webai-tabbar-button")?.remove();
+    win.document.getElementById("zotero-webai-tabbar-actions")?.remove();
   }
 
-  private static async openSidebarFromTabBarButton(win: Window): Promise<void> {
+  static async openSidebarFromReaderToolbar(win: Window): Promise<void> {
     try {
       this.registerSection();
       await this.requestSectionRefresh(win);
@@ -514,8 +334,20 @@ export class UIFactory {
       await this.requestSectionRefresh(win);
       this.focusWebAISection(win);
     } catch (error) {
-      ztoolkit.log("Failed to open Zotero WebAI sidebar from tab bar:", error);
+      ztoolkit.log("Failed to open Zotero WebAI reader sidebar:", error);
     }
+  }
+
+  private static getSelectedReader(win: Window): ReaderWebAIReaderLike | null {
+    const selectedType = `${win.Zotero_Tabs?.selectedType || ""}`.toLowerCase();
+    if (!selectedType.includes("reader")) {
+      return null;
+    }
+    const selectedID = `${win.Zotero_Tabs?.selectedID || ""}`;
+    if (!selectedID) {
+      return null;
+    }
+    return Zotero.Reader.getByTabID(selectedID) as ReaderWebAIReaderLike | null;
   }
 
   private static ensureRightSidebarOpen(win: Window): void {

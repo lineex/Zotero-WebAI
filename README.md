@@ -62,7 +62,7 @@ Default MCP server setting:
 Default tool argument template:
 
 ```json
-{"q":"{{query}}","limit":1000,"mode":"preview"}
+{"q":"{{query}}","limit":1000,"mode":"complete","relevanceScoring":true,"sort":"relevance"}
 ```
 
 ## Support

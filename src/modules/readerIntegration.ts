@@ -2,6 +2,7 @@ import type { ReaderActionDetail } from "../ui/readerActionFlow";
 import { config } from "../../package.json";
 import { getReaderCurrentPage, getReaderSelectedText } from "./readerPrivate";
 import { createTraceId, debugLog } from "../utils/debugLog";
+import { UIFactory } from "../ui/ui";
 
 type ReaderSelectionPopupEvent = Parameters<
   typeof Zotero.Reader.registerEventListener<"renderTextSelectionPopup">
@@ -22,22 +23,16 @@ type ReaderToolbarEvent = Parameters<
   : never;
 
 interface ReaderLike {
+  itemID?: number;
+  type?: string;
   _instanceID?: number | string;
+  _iframeWindow?: Window;
   _window?: Window;
   tabID?: number | string;
 }
 
-interface ContextPaneLike {
-  focus?: () => void;
-  sidenav?: Element;
-  splitter?: Element;
-  togglePane?: () => void;
-}
-
-const SECTION_PANE_ID = "ai-assistant-sidebar";
-const READER_TOOLBAR_BUTTON_CLASS = "zotero-webai-reader-toolbar-button";
-const READER_TOOLBAR_ICON =
-  `chrome://${config.addonRef}/content/icons/icon-20.png`;
+const TOOLBAR_BUTTON_ID = "zotero-webai-reader-toolbar-button";
+const ICON_SRC = `chrome://${config.addonRef}/content/icons/icon-20.png`;
 
 function isChineseLocale(): boolean {
   try {
@@ -66,12 +61,15 @@ function dispatchReaderAction(
   text: string,
   page: number,
   readerItemID: number,
+  reader?: ReaderLike,
+  doc?: Document,
 ): void {
   const traceId = createTraceId(`reader-${action}`);
   const normalizedText = text.trim();
-  const win = Zotero.getMainWindow();
-  const eventBus = (win as Window & { __aiAssistantEventBus?: EventTarget } | null)
-    ?.__aiAssistantEventBus;
+  const win = Zotero.getMainWindow?.() as
+    | (Window & { __aiAssistantEventBus?: EventTarget })
+    | null;
+  const eventBus = win?.__aiAssistantEventBus;
   if (!normalizedText) {
     debugLog.warn("reader.action.blocked", {
       action,
@@ -84,7 +82,7 @@ function dispatchReaderAction(
     });
     return;
   }
-  if (!eventBus) {
+  if (!win || !eventBus) {
     debugLog.warn("reader.action.blocked", {
       action,
       page,
@@ -114,11 +112,32 @@ function dispatchReaderAction(
     traceId,
   });
 
-  eventBus.dispatchEvent(
-    new win.CustomEvent("readerSelectionAction", {
-      detail,
-    }),
-  );
+  void (async () => {
+    try {
+      await UIFactory.openSidebarFromReaderToolbar(win);
+      await delayForReaderPanelListener(win);
+    } catch (error) {
+      debugLog.error("reader.action.openPanel.error", error, {
+        action,
+        page,
+        readerItemID,
+        surface: "reader",
+        traceId,
+      });
+    }
+
+    eventBus.dispatchEvent(
+      new win.CustomEvent("readerSelectionAction", {
+        detail,
+      }),
+    );
+  })();
+}
+
+function delayForReaderPanelListener(win: Window): Promise<void> {
+  return new Promise((resolve) => {
+    win.setTimeout(resolve, 80);
+  });
 }
 
 function onRenderTextSelectionPopup(event: ReaderSelectionPopupEvent): void {
@@ -188,7 +207,7 @@ function onRenderTextSelectionPopup(event: ReaderSelectionPopupEvent): void {
   explainBtn.style.cssText = "flex: 1;";
   explainBtn.textContent = zh ? "解释" : "Explain";
   explainBtn.addEventListener("click", () => {
-    dispatchReaderAction("explain", annotationText, page, readerItemID);
+    dispatchReaderAction("explain", annotationText, page, readerItemID, reader, doc);
   });
 
   const askBtn = doc.createElement("button");
@@ -196,7 +215,7 @@ function onRenderTextSelectionPopup(event: ReaderSelectionPopupEvent): void {
   askBtn.style.cssText = "flex: 1;";
   askBtn.textContent = zh ? "提问..." : "Ask...";
   askBtn.addEventListener("click", () => {
-    dispatchReaderAction("ask", annotationText, page, readerItemID);
+    dispatchReaderAction("ask", annotationText, page, readerItemID, reader, doc);
   });
 
   row.appendChild(explainBtn);
@@ -241,7 +260,7 @@ function onCreateViewContextMenu(event: ReaderViewContextMenuEvent): void {
       persistent: true,
       onCommand: () => {
         if (selectedText && readerItemID) {
-          dispatchReaderAction("explain", selectedText, page, readerItemID);
+          dispatchReaderAction("explain", selectedText, page, readerItemID, reader);
           return;
         }
         debugLog.warn("reader.action.blocked", {
@@ -260,7 +279,7 @@ function onCreateViewContextMenu(event: ReaderViewContextMenuEvent): void {
       persistent: true,
       onCommand: () => {
         if (selectedText && readerItemID) {
-          dispatchReaderAction("ask", selectedText, page, readerItemID);
+          dispatchReaderAction("ask", selectedText, page, readerItemID, reader);
           return;
         }
         debugLog.warn("reader.action.blocked", {
@@ -278,144 +297,115 @@ function onCreateViewContextMenu(event: ReaderViewContextMenuEvent): void {
 
 function onRenderToolbar(event: ReaderToolbarEvent): void {
   const toolbarEvent = event as ReaderToolbarEvent & {
-    append?: (node: unknown) => void;
+    append?: (...nodes: unknown[]) => void;
     doc?: Document;
     reader?: ReaderLike;
   };
   const { append, doc, reader } = toolbarEvent;
-  if (!doc || typeof append !== "function") {
+  if (!doc) {
     return;
   }
 
-  const buttonId = getReaderToolbarButtonId(reader);
-  if (doc.getElementById(buttonId)) {
+  void reader;
+  ensureReaderToolbarButton(doc, append);
+}
+
+function ensureReaderToolbarButton(
+  doc: Document,
+  append?: (...nodes: unknown[]) => void,
+): void {
+  const mainWindow = Zotero.getMainWindow?.();
+  const existing = doc.getElementById(TOOLBAR_BUTTON_ID) as HTMLElement | null;
+  if (existing) {
+    moveToolbarButtonToMiddle(doc, existing);
     return;
   }
 
-  const zh = isChineseLocale();
-  const title = zh ? "打开 Zotero WebAI" : "Open Zotero WebAI";
   const button = doc.createElement("button");
-  button.id = buttonId;
+  button.id = TOOLBAR_BUTTON_ID;
+  button.className = "toolbar-button zotero-webai-reader-toolbar-button";
   button.type = "button";
-  button.className = `toolbar-button ${READER_TOOLBAR_BUTTON_CLASS}`;
-  button.title = title;
-  button.setAttribute("aria-label", title);
+  button.title = "Zotero WebAI";
+  button.setAttribute("aria-label", "Zotero WebAI");
 
   const icon = doc.createElement("img");
   icon.alt = "";
-  icon.src = READER_TOOLBAR_ICON;
+  icon.src = ICON_SRC;
   button.appendChild(icon);
 
   button.addEventListener("click", () => {
-    openReaderSidebar(reader);
+    if (mainWindow) {
+      void UIFactory.openSidebarFromReaderToolbar(mainWindow);
+    }
   });
 
-  append(button);
+  if (append) {
+    append(button);
+  } else {
+    const toolbar = findReaderToolbar(doc);
+    toolbar?.appendChild(button);
+  }
+  moveToolbarButtonToMiddle(doc, button);
 }
 
-function getReaderToolbarButtonId(reader?: ReaderLike): string {
-  return `zotero-webai-reader-button-${reader?.tabID || reader?._instanceID || "active"}`;
-}
-
-function openReaderSidebar(reader?: ReaderLike): void {
-  const win = reader?._window || Zotero.getMainWindow?.();
-  const contextPane = (win as (Window & { ZoteroContextPane?: ContextPaneLike }) | null)
-    ?.ZoteroContextPane;
-  if (!win || !contextPane?.sidenav) {
-    debugLog.warn("reader.toolbar.openSidebar.blocked", {
-      reason: "missing-context-pane",
-      surface: "reader",
-    });
+function moveToolbarButtonToMiddle(doc: Document, button: HTMLElement): void {
+  const toolbar = findReaderToolbar(doc);
+  if (!toolbar || button.parentElement !== toolbar) {
     return;
   }
 
-  try {
-    ensureContextPaneOpen(contextPane);
-    clickContextPaneButton(contextPane.sidenav, win, SECTION_PANE_ID);
-    contextPane.focus?.();
-    debugLog.info("reader.toolbar.openSidebar", {
-      paneID: SECTION_PANE_ID,
-      surface: "reader",
-    });
-  } catch (error) {
-    debugLog.error("reader.toolbar.openSidebar.error", error, {
-      paneID: SECTION_PANE_ID,
-      surface: "reader",
-    });
-    ztoolkit.log("Failed to open Zotero WebAI reader sidebar:", error);
+  const anchor = findMiddleToolbarAnchor(toolbar);
+  if (anchor && anchor !== button && anchor.nextSibling !== button) {
+    toolbar.insertBefore(button, anchor.nextSibling);
   }
 }
 
-function ensureContextPaneOpen(contextPane: ContextPaneLike): void {
-  const paneRoot = contextPane.sidenav?.closest?.(
-    "zotero-context-pane,#zotero-context-pane,.zotero-context-pane",
-  ) as HTMLElement | null;
-  const collapsed =
-    contextPane.sidenav?.getAttribute("collapsed") === "true" ||
-    (contextPane.sidenav as HTMLElement | undefined)?.hidden ||
-    contextPane.splitter?.getAttribute("state") === "collapsed" ||
-    paneRoot?.getAttribute("collapsed") === "true" ||
-    paneRoot?.hidden;
-
-  if (collapsed) {
-    contextPane.togglePane?.();
-  }
-}
-
-function clickContextPaneButton(
-  sidenav: Element,
-  win: Window,
-  paneID: string,
-): void {
+function findReaderToolbar(doc: Document): HTMLElement | null {
   const selectors = [
-    `[data-pane-id="${paneID}"]`,
-    `[data-paneid="${paneID}"]`,
-    `[pane-id="${paneID}"]`,
-    `[paneid="${paneID}"]`,
-    `[value="${paneID}"]`,
-    `[aria-controls="${paneID}"]`,
-    `#${paneID}`,
+    "#toolbarContainer #toolbarViewer",
+    "#toolbarViewer",
+    "#viewer-toolbar",
+    ".reader-toolbar",
+    ".toolbar",
+    "[role='toolbar']",
   ];
-  let target: Element | null = null;
+
   for (const selector of selectors) {
-    target = sidenav.querySelector(selector);
-    if (target) {
-      break;
+    const match = doc.querySelector(selector) as HTMLElement | null;
+    if (match) {
+      return match;
+    }
+  }
+  return null;
+}
+
+function findMiddleToolbarAnchor(toolbar: HTMLElement): Element | null {
+  const selectors = [
+    "[data-l10n-id*='page']",
+    "[aria-label*='Page']",
+    "[title*='Page']",
+    "[aria-label*='PDF']",
+    "[title*='PDF']",
+    "input[type='number']",
+  ];
+
+  for (const selector of selectors) {
+    const match = toolbar.querySelector(selector);
+    if (match) {
+      return match.closest("button,toolbarbutton,div,span") || match;
     }
   }
 
-  if (!target) {
-    const candidates = Array.from(
-      sidenav.querySelectorAll("button, toolbarbutton, div, span"),
-    ) as Element[];
-    target =
-      candidates.find((candidate) => {
-        const element = candidate as HTMLElement;
-        return String(
-          element.dataset?.paneId ||
-            element.getAttribute("aria-label") ||
-            element.getAttribute("title") ||
-            element.textContent ||
-            "",
-        )
-          .toLowerCase()
-          .includes("zotero-webai");
-      }) || null;
-  }
-
-  if ((target as HTMLElement | null)?.click) {
-    (target as HTMLElement).click();
-    return;
-  }
-
-  target?.dispatchEvent(
-    new win.MouseEvent("click", {
-      bubbles: true,
-      cancelable: true,
-    }),
+  const controls = Array.from(
+    toolbar.querySelectorAll(
+      "button,toolbarbutton,[role='button']",
+    ) as NodeListOf<Element>,
   );
+  const fallback = controls[
+    Math.max(0, Math.floor(controls.length / 2) - 1)
+  ] as Element | undefined;
+  return fallback || null;
 }
-
 export function initReaderIntegration(): void {
   if (typeof Zotero?.Reader?.registerEventListener !== "function") {
     debugLog.warn("reader.integration.skip", {
@@ -430,6 +420,7 @@ export function initReaderIntegration(): void {
 
   popupHandler = onRenderTextSelectionPopup;
   contextMenuHandler = onCreateViewContextMenu;
+  toolbarHandler = onRenderToolbar;
 
   Zotero.Reader.registerEventListener(
     "renderTextSelectionPopup",
@@ -439,6 +430,11 @@ export function initReaderIntegration(): void {
   Zotero.Reader.registerEventListener(
     "createViewContextMenu",
     contextMenuHandler,
+    config.addonID,
+  );
+  Zotero.Reader.registerEventListener(
+    "renderToolbar",
+    toolbarHandler,
     config.addonID,
   );
 
