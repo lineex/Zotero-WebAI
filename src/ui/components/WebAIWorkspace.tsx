@@ -510,7 +510,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           }
           handledMCPRequestsRef.current.add(request.id);
           await runMCPBridgeRequest({
-            deliverPrompt,
+            appendExecutionRecord,
             request,
             serviceLabel: service.label,
             settings,
@@ -3245,17 +3245,13 @@ function parseMCPBridgePayload(
 }
 
 async function runMCPBridgeRequest({
-  deliverPrompt,
+  appendExecutionRecord,
   request,
   serviceLabel,
   settings,
   setStatus,
 }: {
-  deliverPrompt: (
-    prompt: string,
-    statusPrefix?: string | null,
-    captureOptions?: AssistantReplyRecordOptions,
-  ) => Promise<void>;
+  appendExecutionRecord: (draft: WebAIExecutionRecordDraft) => string;
   request: MCPBridgeRequest;
   serviceLabel: string;
   settings: Settings;
@@ -3268,58 +3264,54 @@ async function runMCPBridgeRequest({
       request.toolName,
       request.arguments,
     );
-    const prompt = formatMCPBridgeResultPrompt(request, detailed);
-    await deliverPrompt(
-      prompt,
-      `MCP ${request.toolName} result inserted into ${serviceLabel}.`,
-      {
-        kind: "mcp",
-        sourcePrompt: prompt,
-        subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} ${request.toolName} via ${serviceLabel}`,
-        title: `Zotero MCP result: ${request.toolName}`,
-      },
-    );
+    const body = formatMCPBridgeResultRecordBody(request, detailed);
+    appendExecutionRecord({
+      body,
+      kind: "mcp",
+      sourcePrompt: request.raw,
+      status: "done",
+      subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} ${request.toolName}`,
+      title: `Zotero MCP result: ${request.toolName}`,
+    });
+    setStatus(`MCP ${request.toolName} result added to Zotero WebAI conversation.`);
   } catch (error) {
     const message =
       error instanceof Error && error.message ? error.message : String(error);
-    const prompt = [
-      "Zotero WebAI MCP tool error:",
+    const body = [
+      "MCP tool error:",
       `Tool: ${request.toolName}`,
       `Arguments: ${safeJSONStringify(request.arguments)}`,
       `Error: ${message}`,
-      "",
-      "Please revise the MCP request if another Zotero tool or different arguments are needed, or continue without this tool if enough context is available.",
     ].join("\n");
-    await deliverPrompt(prompt, `MCP ${request.toolName} failed.`, {
+    appendExecutionRecord({
+      body,
       kind: "mcp",
-      sourcePrompt: prompt,
-      subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} ${request.toolName} via ${serviceLabel}`,
+      sourcePrompt: request.raw,
+      status: "error",
+      subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} ${request.toolName}`,
       title: `Zotero MCP error: ${request.toolName}`,
     });
+    setStatus(`MCP ${request.toolName} failed; error added to conversation.`);
   }
 }
 
-function formatMCPBridgeResultPrompt(
+function formatMCPBridgeResultRecordBody(
   request: MCPBridgeRequest,
   result: MCPToolDetailedResult,
 ): string {
   const resultText =
-    formatMCPPromptContext(result.results, {
+    formatMCPDisplayContext(result.results, {
       toolName: result.toolName || request.toolName,
       usedFallback: false,
     }) ||
     truncateText(result.text || safeJSONStringify(result.raw), MCP_CONTEXT_TEXT_LIMIT) ||
     "MCP tool returned no structured or text content.";
   return [
-    "Zotero WebAI MCP tool result:",
+    "MCP tool result:",
     `Tool: ${request.toolName}`,
     `Arguments: ${safeJSONStringify(request.arguments)}`,
     "",
     resultText,
-    "",
-    "Use this Zotero MCP result to continue answering the user's request. If another Zotero MCP tool is needed, emit a new ZOTERO_WEBAI_MCP_REQUEST block using the same active token and a schema-valid arguments object.",
-    FINAL_ANSWER_FORMAT_INSTRUCTION,
-    "Final answer must summarize only the useful result for the user. Do not repeat Tool, Arguments, raw JSON, MCP context, bridge markers, or execution steps.",
   ].join("\n");
 }
 
@@ -3377,7 +3369,7 @@ function buildMCPPlanningContext(
   return [
     "Zotero MCP bridge:",
     "The user explicitly selected /zotero-mcp. Zotero WebAI can run local zotero-mcp tools for this conversation; decide whether a tool is needed and choose schema-valid arguments.",
-    "If Zotero MCP is needed, do not invent the tool result. Reply only with an MCP request block using the markers named below. Zotero WebAI will execute it and insert the result back into this chat.",
+    "If Zotero MCP is needed, do not invent the tool result. Reply only with an MCP request block using the markers named below. Zotero WebAI will execute it and show each tool result in the Zotero WebAI Conversation panel below the web page.",
     "Start marker: ZOTERO_WEBAI_MCP_REQUEST",
     "End marker: END_ZOTERO_WEBAI_MCP_REQUEST",
     `Required JSON fields inside the block: {"token":"${mcpBridgeToken}","id":"short-unique-id","tool":"tool_name","arguments":{...}}`,
@@ -3432,6 +3424,26 @@ function formatMCPPromptContext(
       outcome?.toolName ? `Tool used: ${outcome.toolName}` : "",
       outcome?.usedFallback ? "The configured MCP tool failed, so Zotero WebAI selected this read-only fallback tool from tools/list." : "",
       "Use the following MCP tool output as external/local Zotero context for this conversation. Separate MCP evidence from paper evidence, and mention uncertainty when the MCP output is incomplete.",
+      ...formattedItems,
+    ].join("\n\n"),
+    MCP_CONTEXT_TEXT_LIMIT,
+  );
+}
+
+function formatMCPDisplayContext(
+  results: MCPToolResultItem[],
+  outcome?: Pick<MCPToolDetailedCallOutcome, "toolName" | "usedFallback">,
+): string {
+  const formattedItems = results
+    .map((result, index) => formatMCPPromptItem(result, index))
+    .filter(Boolean);
+  if (!formattedItems.length) {
+    return "";
+  }
+  return truncateText(
+    [
+      outcome?.toolName ? `Tool used: ${outcome.toolName}` : "",
+      outcome?.usedFallback ? "Mode: automatic fallback" : "",
       ...formattedItems,
     ].join("\n\n"),
     MCP_CONTEXT_TEXT_LIMIT,
@@ -4184,7 +4196,7 @@ function formatMCPDetailedRecordBody(
   },
 ): string {
   const resultText =
-    formatMCPPromptContext(result.results, {
+    formatMCPDisplayContext(result.results, {
       toolName: result.toolName,
       usedFallback: Boolean(options?.usedFallback),
     }) ||
