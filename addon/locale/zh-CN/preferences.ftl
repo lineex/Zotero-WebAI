@@ -1,4 +1,4 @@
-ai-assistant-pref-description = Zotero WebAI 在 Zotero 侧边栏内嵌 DeepSeek Web 和 Z.ai Web 登录，不需要模型密钥。
+ai-assistant-pref-description = Zotero WebAI 在 Zotero 侧边栏内嵌 DeepSeek Web、Z.ai Web 和 ChatGPT Web 登录，不需要模型密钥。
 ai-assistant-pref-save = 保存
 ai-assistant-pref-export-debug-log = 导出调试日志
 ai-assistant-pref-status-saved = 设置已保存

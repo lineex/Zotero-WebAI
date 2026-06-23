@@ -2,13 +2,13 @@
 
 Chinese README: [README.zh-CN.md](README.zh-CN.md).
 
-Zotero WebAI is a Zotero 9 reading workspace that embeds DeepSeek Web and Z.ai Web beside the current Zotero library item or PDF reader. It requires no model API key: sign in inside the embedded web page and use the Zotero-side chat box to send Zotero context, slash commands, custom skills, and real MCP tool results into the web chat.
+Zotero WebAI is a Zotero 9 reading workspace that embeds DeepSeek Web, Z.ai Web, and ChatGPT Web beside the current Zotero library item or PDF reader. It requires no model API key: sign in inside the embedded web page and use the Zotero-side chat box to send Zotero context, slash commands, custom skills, and real MCP tool results into the web chat.
 
 ## Features
 
 - A small button on the right side of Zotero's tab bar opens an adaptive right sidebar.
 - Works in the library and PDF reader, using the current item, selected passage, imported PDF, or collection context.
-- Embedded DeepSeek Web and Z.ai Web login with an external-browser fallback.
+- Embedded DeepSeek Web, Z.ai Web, and ChatGPT Web login with an external-browser fallback.
 - Coding-client style slash commands in the chat box.
 - `/pdf` attaches the current PDF or Zotero item full text to the next prompt.
 - `/websearch` runs the built-in web search and attaches readable results.
@@ -16,7 +16,7 @@ Zotero WebAI is a Zotero 9 reading workspace that embeds DeepSeek Web and Z.ai W
 - Custom Skills in settings; type `/` in the chat box to select a Skill.
 - Up to 1000 custom Skills.
 - Results panel for MCP outputs, Skill prompts/results, PDF-assisted answers, web-search answers, and captured web answers.
-- No DeepSeek/Z.ai API configuration.
+- No DeepSeek/Z.ai/ChatGPT API configuration.
 
 ## Usage
 
@@ -24,7 +24,7 @@ Zotero WebAI is a Zotero 9 reading workspace that embeds DeepSeek Web and Z.ai W
 2. Start `zotero-mcp` locally if you want `/zotero-mcp` tools available.
 3. Open a PDF or select a library item.
 4. Click the Zotero WebAI button on the right side of the tab bar.
-5. Sign in to DeepSeek Web or Z.ai Web in the sidebar.
+5. Sign in to DeepSeek Web, Z.ai Web, or ChatGPT Web in the sidebar.
 6. Type `/` in the Zotero WebAI chat box to choose `/pdf`, `/websearch`, `/zotero-mcp`, or a custom Skill.
 7. Send a prompt. Zotero WebAI inserts the prompt, tries to submit it, captures the web answer, and records command results in the Results panel.
 

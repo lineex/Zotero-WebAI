@@ -1,4 +1,4 @@
-ai-assistant-pref-description = Zotero WebAI uses embedded DeepSeek Web and Z.ai Web login in the Zotero sidebar. No model API key is required.
+ai-assistant-pref-description = Zotero WebAI uses embedded DeepSeek Web, Z.ai Web, and ChatGPT Web login in the Zotero sidebar. No model API key is required.
 ai-assistant-pref-save = Save
 ai-assistant-pref-export-debug-log = Export Debug Log
 ai-assistant-pref-status-saved = Settings saved

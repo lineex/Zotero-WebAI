@@ -39,9 +39,9 @@ ai-assistant-empty-scope-library = 当前没有选中文献库上下文
 ai-assistant-empty-scope-reader = 当前没有 PDF 阅读器上下文
 
 ai-assistant-config-title = 登录网页 AI
-ai-assistant-config-body = 在右侧侧边栏中登录 DeepSeek Web 或 Z.ai Web 后即可使用。
+ai-assistant-config-body = 在右侧侧边栏中登录 DeepSeek Web、Z.ai Web 或 ChatGPT Web 后即可使用。
 ai-assistant-config-disabled-reason = 请先打开 Zotero WebAI 侧边栏并完成网页登录。
-ai-assistant-config-placeholder = 登录 DeepSeek Web 或 Z.ai Web 后开始对话。
+ai-assistant-config-placeholder = 登录 DeepSeek Web、Z.ai Web 或 ChatGPT Web 后开始对话。
 
 ai-assistant-unsupported-title = 选择一篇论文
 ai-assistant-unsupported-body = 当前支持单篇论文、活动 PDF、划词输入、图片输入和导入 PDF。
@@ -50,7 +50,7 @@ ai-assistant-unsupported-placeholder = 选择一篇论文或当前 PDF 以启用
 ai-assistant-home-title = 准备就绪
 ai-assistant-home-body = 选择一个 skill，或直接针对当前论文生成网页提示词。
 ai-assistant-thread-title = WebAI 工作区
-ai-assistant-thread-body = 使用 DeepSeek Web 或 Z.ai Web 继续当前阅读流程。
+ai-assistant-thread-body = 使用 DeepSeek Web、Z.ai Web 或 ChatGPT Web 继续当前阅读流程。
 
 ai-assistant-scope-selection = 已包含选中文本
 ai-assistant-scope-items = { $count } 项在当前范围内

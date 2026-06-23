@@ -2,13 +2,13 @@
 
 [English README](README.md)
 
-Zotero WebAI 是一个面向 Zotero 9 的阅读侧边栏插件，可以在当前文献、PDF 阅读器旁边内嵌 DeepSeek Web 和 Z.ai Web。插件不需要模型 API Key，用户直接在内嵌网页中登录，并通过 Zotero 侧边栏把文献上下文、输入框 slash 命令、自定义 Skill 和 MCP 工具真实结果送入网页对话。
+Zotero WebAI 是一个面向 Zotero 9 的阅读侧边栏插件，可以在当前文献、PDF 阅读器旁边内嵌 DeepSeek Web、Z.ai Web 和 ChatGPT Web。插件不需要模型 API Key，用户直接在内嵌网页中登录，并通过 Zotero 侧边栏把文献上下文、输入框 slash 命令、自定义 Skill 和 MCP 工具真实结果送入网页对话。
 
 ## 功能
 
 - 在 Zotero 标签页栏右侧显示 Zotero WebAI 小按钮，点击后打开右侧自适应侧边栏。
 - 支持文献库和 PDF 阅读器上下文，带入当前条目、选中文本、导入 PDF 或集合信息。
-- 内嵌 DeepSeek Web 与 Z.ai Web 登录页面，并保留外部浏览器打开入口。
+- 内嵌 DeepSeek Web、Z.ai Web 与 ChatGPT Web 登录页面，并保留外部浏览器打开入口。
 - 对话框支持类似 coding 客户端的 slash 命令。
 - `/pdf` 将当前 PDF 或 Zotero 条目的全文附加到本次提示词。
 - `/websearch` 启动内置联网搜索，并把可读搜索结果附加到本次提示词。
@@ -16,7 +16,7 @@ Zotero WebAI 是一个面向 Zotero 9 的阅读侧边栏插件，可以在当前
 - 设置页支持新增自定义 Skill，在对话框输入 `/` 即可选择。
 - 最多可以添加 1000 个自定义 Skill。
 - Results 面板显示 MCP 输出、Skill 提示与结果、PDF 辅助回答、联网搜索回答和网页回答捕获内容。
-- 不包含 DeepSeek/Z.ai API 配置。
+- 不包含 DeepSeek/Z.ai/ChatGPT API 配置。
 
 ## 使用
 
@@ -25,7 +25,7 @@ Zotero WebAI 是一个面向 Zotero 9 的阅读侧边栏插件，可以在当前
 3. 如需 `/zotero-mcp` 工具，请先在本机启动 `zotero-mcp`。
 4. 打开 PDF 或选择一条文献。
 5. 点击标签页栏右侧的 Zotero WebAI 按钮。
-6. 在侧边栏中登录 DeepSeek Web 或 Z.ai Web。
+6. 在侧边栏中登录 DeepSeek Web、Z.ai Web 或 ChatGPT Web。
 7. 在对话框输入 `/`，选择 `/pdf`、`/websearch`、`/zotero-mcp` 或自定义 Skill。
 8. 发送问题后，插件会尝试自动提交网页对话、捕获网页回答，并在 Results 面板记录本次命令结果。
 

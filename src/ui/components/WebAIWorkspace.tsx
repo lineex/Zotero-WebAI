@@ -14,10 +14,11 @@ import {
 } from "../../services/settingsManager";
 import type { ScopeContext } from "../../types/scope";
 import { getPref, setPref } from "../../utils/prefs";
+import { getRequestedLanguage, isChineseLocale } from "../../utils/locale";
 import { getSidebarTheme, type SidebarTheme } from "../theme";
 import { typography } from "../typography";
 
-type WebAIServiceId = "deepseek" | "zai";
+type WebAIServiceId = "deepseek" | "zai" | "chatgpt";
 type PromptSourceMode = "paper" | "selection";
 type WebAICommandKind = "mcp" | "new" | "pdf" | "skill" | "web";
 
@@ -207,7 +208,336 @@ const SERVICES: WebAIService[] = [
     label: "Z.ai Web",
     url: "https://chat.z.ai/",
   },
+  {
+    id: "chatgpt",
+    label: "ChatGPT Web",
+    url: "https://chatgpt.com/",
+  },
 ];
+
+interface WebAIStrings {
+  buttons: {
+    appendNote: string;
+    cancel: string;
+    capture: string;
+    chatMode: string;
+    clear: string;
+    copy: string;
+    edit: string;
+    external: string;
+    hide: string;
+    hideWeb: string;
+    loginMode: string;
+    loginWindow: string;
+    next: string;
+    openExternal: string;
+    previous: string;
+    regenerate: string;
+    reload: string;
+    save: string;
+    send: string;
+    showWeb: string;
+    webSearch: string;
+  };
+  commands: {
+    mcpDescription: string;
+    mcpLabel: string;
+    newDescription: string;
+    newLabel: string;
+    pdfDescription: string;
+    pdfLabel: string;
+    webDescription: string;
+    webLabel: string;
+  };
+  composerPlaceholder: string;
+  defaultStatus: string;
+  emptyConversation: string;
+  errors: {
+    currentPDFUnavailable: string;
+    editedPromptEmpty: string;
+    mcpUnavailable: string;
+    noAssistantResult: string;
+    noMessageOrCommand: string;
+    noWebChatText: string;
+  };
+  labels: {
+    conversation: string;
+    history: string;
+    noSavedSessions: string;
+    processHidden: string;
+    user: string;
+    zaiLoginMode: string;
+  };
+  record: {
+    capturedWebAnswer: string;
+    captureNeeded: string;
+    currentPDFCommand: string;
+    mcpAssistedAnswer: string;
+    pdfAssistedAnswer: string;
+    skillResult: (label: string) => string;
+    webAnswer: string;
+    webSearchAnswer: string;
+  };
+  status: {
+    appendNote: (title: string, noteID: number) => string;
+    captured: (serviceLabel: string) => string;
+    clearSelectedCommandTitle: string;
+    clearedSession: string;
+    copiedRecord: (title: string) => string;
+    copiedUserPrompt: string;
+    displayHidden: (serviceLabel: string) => string;
+    displayRestored: (serviceLabel: string) => string;
+    editPrompt: string;
+    failed: (message: string) => string;
+    incomingReady: (label: string, serviceLabel: string) => string;
+    loaded: (serviceLabel: string) => string;
+    loadedSession: (title: string) => string;
+    loadedZai: string;
+    loginWindowOpened: (serviceLabel: string) => string;
+    promptCopied: (prefix: string, length: number, serviceLabel: string) => string;
+    promptInserted: (prefix: string, serviceLabel: string) => string;
+    promptSent: (prefix: string, serviceLabel: string) => string;
+    promptSentCaptureNeeded: string;
+    regenerating: (title: string) => string;
+    sendTitle: string;
+    slashMCP: string;
+    slashNew: string;
+    slashPDF: string;
+    slashSkill: (slashCommand: string) => string;
+    slashWeb: string;
+    startedConversation: (serviceLabel: string) => string;
+    turnCount: (turns: number) => string;
+    turnsSessions: (turns: number, sessions: number) => string;
+    waiting: (serviceLabel: string) => string;
+    zaiChatRestored: string;
+    zaiLoginMode: string;
+  };
+}
+
+const EN_STRINGS: WebAIStrings = {
+  buttons: {
+    appendNote: "Append Note",
+    cancel: "Cancel",
+    capture: "Capture",
+    chatMode: "Chat Mode",
+    clear: "Clear",
+    copy: "Copy",
+    edit: "Edit",
+    external: "External",
+    hide: "Hide",
+    hideWeb: "Hide Web",
+    loginMode: "Login Mode",
+    loginWindow: "Login Window",
+    next: "Next",
+    openExternal: "Open External",
+    previous: "Previous",
+    regenerate: "Regenerate",
+    reload: "Reload",
+    save: "Save",
+    send: "Send",
+    showWeb: "Show Web",
+    webSearch: "Web Search",
+  },
+  commands: {
+    mcpDescription: "Load zotero-mcp tools for this conversation",
+    mcpLabel: "Zotero MCP",
+    newDescription: "Start a clean chat session and reload the web chat",
+    newLabel: "New Conversation",
+    pdfDescription: "Attach current PDF or item full text to this prompt",
+    pdfLabel: "Current PDF",
+    webDescription: "Search the web and attach results to this prompt",
+    webLabel: "Web Search",
+  },
+  composerPlaceholder:
+    "Message in Markdown, /new conversation, or / for PDF, Web Search, Zotero MCP, Skills",
+  defaultStatus: "Type / for PDF, Web Search, Zotero MCP, or custom skills.",
+  emptyConversation:
+    "Send a message to start a new turn, type / for commands, or use /new conversation to reset.",
+  errors: {
+    currentPDFUnavailable: "Current PDF or Zotero item full text is unavailable.",
+    editedPromptEmpty: "Edited prompt is empty.",
+    mcpUnavailable: "MCP unavailable; check that zotero-mcp is running.",
+    noAssistantResult: "No assistant result found in the embedded web chat",
+    noMessageOrCommand: "Write a message or choose a / command.",
+    noWebChatText: "No web chat text available",
+  },
+  labels: {
+    conversation: "Conversation",
+    history: "History",
+    noSavedSessions: "No saved sessions yet.",
+    processHidden: "Process hidden",
+    user: "User",
+    zaiLoginMode: "Z.ai Login Mode",
+  },
+  record: {
+    capturedWebAnswer: "Captured web answer",
+    captureNeeded: "Capture needed",
+    currentPDFCommand: "Current PDF command",
+    mcpAssistedAnswer: "MCP-assisted answer",
+    pdfAssistedAnswer: "PDF-assisted answer",
+    skillResult: (label) => `Skill result: ${label}`,
+    webAnswer: "Web answer",
+    webSearchAnswer: "Web-search answer",
+  },
+  status: {
+    appendNote: (title, noteID) =>
+      `Appended ${title} to Zotero WebAI Notes (#${noteID}).`,
+    captured: (serviceLabel) =>
+      `Captured latest ${serviceLabel} answer into Zotero WebAI.`,
+    clearSelectedCommandTitle: "Clear selected command",
+    clearedSession: "Cleared the current session.",
+    copiedRecord: (title) => `Copied ${title}.`,
+    copiedUserPrompt: "Copied user prompt.",
+    displayHidden: (serviceLabel) =>
+      `${serviceLabel} display hidden. Click Show Web to restore it.`,
+    displayRestored: (serviceLabel) => `${serviceLabel} display restored.`,
+    editPrompt: "Edit the user prompt in place, then save to generate a new answer.",
+    failed: (message) => `Failed: ${message}`,
+    incomingReady: (label, serviceLabel) =>
+      `${label} is ready. Send inserts it into ${serviceLabel}.`,
+    loaded: (serviceLabel) =>
+      `Loaded ${serviceLabel}. Sign in, then Send inserts prompts into the web chat.`,
+    loadedSession: (title) => `Loaded session: ${title}`,
+    loadedZai:
+      "Loaded Z.ai Web. Use Login Mode or Login Window if captcha needs more room.",
+    loginWindowOpened: (serviceLabel) =>
+      `Opened a larger ${serviceLabel} login window. After sign-in, return here and reload if needed.`,
+    promptCopied: (prefix, length, serviceLabel) =>
+      `${prefix}Prompt copied (${length} characters). If it did not appear in ${serviceLabel}, click the web chat box and paste.`,
+    promptInserted: (prefix, serviceLabel) =>
+      `${prefix}Prompt inserted into ${serviceLabel}. Send it in the web chat, then click Capture if needed.`,
+    promptSent: (prefix, serviceLabel) =>
+      `${prefix}Prompt sent to ${serviceLabel}; waiting for result.`,
+    promptSentCaptureNeeded:
+      "Prompt sent. If the answer is not captured automatically, click Capture.",
+    regenerating: (title) => `Regenerating ${title}.`,
+    sendTitle: "Insert prompt into the web chat, with clipboard fallback",
+    slashMCP:
+      "Zotero MCP selected. Send to load zotero-mcp tools; the web model can request real tool calls.",
+    slashNew: "Start a new conversation and clear the current web chat context.",
+    slashPDF:
+      "Current PDF selected. Send to attach the current PDF/item full text to this prompt.",
+    slashSkill: (slashCommand) =>
+      `Skill /${slashCommand} selected. Write your question and send.`,
+    slashWeb: "Web Search selected. Send to search the web and attach the results.",
+    startedConversation: (serviceLabel) =>
+      `Started a new ${serviceLabel} conversation.`,
+    turnCount: (turns) => `${turns} turns`,
+    turnsSessions: (turns, sessions) => `${turns} turns / ${sessions} sessions`,
+    waiting: (serviceLabel) => `Waiting for ${serviceLabel} answer...`,
+    zaiChatRestored: "Z.ai Chat Mode restored. Send inserts prompts into the web chat.",
+    zaiLoginMode: "Z.ai Login Mode gives the captcha the full sidebar height.",
+  },
+};
+
+const ZH_STRINGS: WebAIStrings = {
+  buttons: {
+    appendNote: "追加笔记",
+    cancel: "取消",
+    capture: "捕获",
+    chatMode: "对话模式",
+    clear: "清空",
+    copy: "复制",
+    edit: "修改",
+    external: "外部打开",
+    hide: "隐藏",
+    hideWeb: "隐藏网页",
+    loginMode: "登录模式",
+    loginWindow: "登录窗口",
+    next: "下一条",
+    openExternal: "外部打开",
+    previous: "上一条",
+    regenerate: "重新生成",
+    reload: "刷新",
+    save: "保存",
+    send: "发送",
+    showWeb: "显示网页",
+    webSearch: "联网搜索",
+  },
+  commands: {
+    mcpDescription: "为本轮对话加载 zotero-mcp 工具",
+    mcpLabel: "Zotero MCP",
+    newDescription: "新建干净会话并刷新网页对话",
+    newLabel: "新对话",
+    pdfDescription: "把当前 PDF 或条目全文加入本次提示词",
+    pdfLabel: "当前 PDF",
+    webDescription: "联网搜索并把结果加入本次提示词",
+    webLabel: "联网搜索",
+  },
+  composerPlaceholder:
+    "输入 Markdown、/new conversation，或输入 / 调出 PDF、联网搜索、Zotero MCP、Skill",
+  defaultStatus: "输入 / 可选择 PDF、联网搜索、Zotero MCP 或自定义 Skill。",
+  emptyConversation:
+    "发送消息开始新一轮对话，输入 / 调出命令，或使用 /new conversation 重置。",
+  errors: {
+    currentPDFUnavailable: "当前 PDF 或 Zotero 条目全文不可用。",
+    editedPromptEmpty: "修改后的提示词为空。",
+    mcpUnavailable: "MCP 不可用，请确认 zotero-mcp 正在运行。",
+    noAssistantResult: "内嵌网页对话中没有找到助手回复",
+    noMessageOrCommand: "请输入消息或选择一个 / 命令。",
+    noWebChatText: "无法读取网页对话文本",
+  },
+  labels: {
+    conversation: "对话",
+    history: "历史",
+    noSavedSessions: "还没有保存的会话。",
+    processHidden: "过程已折叠",
+    user: "用户",
+    zaiLoginMode: "Z.ai 登录模式",
+  },
+  record: {
+    capturedWebAnswer: "已捕获网页回复",
+    captureNeeded: "需要手动捕获",
+    currentPDFCommand: "当前 PDF 命令",
+    mcpAssistedAnswer: "MCP 辅助回答",
+    pdfAssistedAnswer: "PDF 辅助回答",
+    skillResult: (label) => `Skill 结果：${label}`,
+    webAnswer: "网页回答",
+    webSearchAnswer: "联网搜索回答",
+  },
+  status: {
+    appendNote: (title, noteID) =>
+      `已将 ${title} 追加到 Zotero WebAI Notes（#${noteID}）。`,
+    captured: (serviceLabel) => `已捕获最新 ${serviceLabel} 回复到 Zotero WebAI。`,
+    clearSelectedCommandTitle: "清除已选命令",
+    clearedSession: "已清空当前会话。",
+    copiedRecord: (title) => `已复制 ${title}。`,
+    copiedUserPrompt: "已复制用户提示词。",
+    displayHidden: (serviceLabel) => `${serviceLabel} 网页已隐藏，点击显示网页可恢复。`,
+    displayRestored: (serviceLabel) => `${serviceLabel} 网页已恢复显示。`,
+    editPrompt: "直接修改用户提示词，保存后会生成新的结果。",
+    failed: (message) => `失败：${message}`,
+    incomingReady: (label, serviceLabel) =>
+      `${label} 已准备好，发送后会插入 ${serviceLabel}。`,
+    loaded: (serviceLabel) =>
+      `已加载 ${serviceLabel}。登录后点击发送即可把提示词插入网页对话。`,
+    loadedSession: (title) => `已加载会话：${title}`,
+    loadedZai: "已加载 Z.ai Web。验证码需要更多空间时可使用登录模式或登录窗口。",
+    loginWindowOpened: (serviceLabel) =>
+      `已打开更大的 ${serviceLabel} 登录窗口。登录后回到这里，必要时刷新。`,
+    promptCopied: (prefix, length, serviceLabel) =>
+      `${prefix}提示词已复制（${length} 字符）。如果没有出现在 ${serviceLabel}，请点击网页输入框后粘贴。`,
+    promptInserted: (prefix, serviceLabel) =>
+      `${prefix}提示词已插入 ${serviceLabel}。请在网页对话中发送，必要时点击捕获。`,
+    promptSent: (prefix, serviceLabel) =>
+      `${prefix}已发送到 ${serviceLabel}，正在等待结果。`,
+    promptSentCaptureNeeded: "提示词已发送。如未自动捕获回复，请点击捕获。",
+    regenerating: (title) => `正在重新生成 ${title}。`,
+    sendTitle: "把提示词插入网页对话，必要时使用剪贴板兜底",
+    slashMCP:
+      "已选择 Zotero MCP。发送后会加载 zotero-mcp 工具，网页模型可请求真实工具调用。",
+    slashNew: "开始新对话并清空当前网页对话上下文。",
+    slashPDF: "已选择当前 PDF。发送后会把当前 PDF/条目全文加入本次提示词。",
+    slashSkill: (slashCommand) => `已选择 Skill /${slashCommand}。请输入问题后发送。`,
+    slashWeb: "已选择联网搜索。发送后会搜索网页并附加结果。",
+    startedConversation: (serviceLabel) => `已开始新的 ${serviceLabel} 对话。`,
+    turnCount: (turns) => `${turns} 轮`,
+    turnsSessions: (turns, sessions) => `${turns} 轮 / ${sessions} 个会话`,
+    waiting: (serviceLabel) => `正在等待 ${serviceLabel} 回复...`,
+    zaiChatRestored: "已恢复 Z.ai 对话模式。发送会把提示词插入网页对话。",
+    zaiLoginMode: "Z.ai 登录模式会把验证码区域扩展到整个侧边栏高度。",
+  },
+};
 const ZOTERO_MCP_COMMAND: WebAISkill = {
   description: "Load zotero-mcp tools for this conversation",
   id: "zotero-mcp",
@@ -243,6 +573,51 @@ const WEB_SEARCH_COMMAND: WebAISkill = {
 };
 const INITIAL_CHAT_SESSIONS = loadChatSessions();
 
+function resolveWebAILocale(hostWindow: Window): string {
+  const requested = getRequestedLanguage();
+  if (requested) {
+    return requested;
+  }
+  return (
+    hostWindow.navigator?.language ||
+    ((globalThis as unknown as { navigator?: { language?: string } }).navigator
+      ?.language || "")
+  );
+}
+
+function getWebAIStrings(language: string): WebAIStrings {
+  return isChineseLocale(language) ? ZH_STRINGS : EN_STRINGS;
+}
+
+function getServiceByID(serviceID: WebAIServiceId): WebAIService {
+  return SERVICES.find((service) => service.id === serviceID) || SERVICES[0];
+}
+
+function getLocalizedBuiltInCommands(text: WebAIStrings): WebAISkill[] {
+  return [
+    {
+      ...NEW_CONVERSATION_COMMAND,
+      description: text.commands.newDescription,
+      label: text.commands.newLabel,
+    },
+    {
+      ...CURRENT_PDF_COMMAND,
+      description: text.commands.pdfDescription,
+      label: text.commands.pdfLabel,
+    },
+    {
+      ...WEB_SEARCH_COMMAND,
+      description: text.commands.webDescription,
+      label: text.commands.webLabel,
+    },
+    {
+      ...ZOTERO_MCP_COMMAND,
+      description: text.commands.mcpDescription,
+      label: text.commands.mcpLabel,
+    },
+  ];
+}
+
 export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   contextSummary,
   customPresets = "",
@@ -254,8 +629,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   settings,
 }) => {
   const isReaderWorkspace = location === "reader";
+  const language = useMemo(() => resolveWebAILocale(hostWindow), [hostWindow]);
+  const text = useMemo(() => getWebAIStrings(language), [language]);
   const [service, setService] = useState<WebAIService>(SERVICES[0]);
-  const [status, setStatus] = useState(`Loaded ${SERVICES[0].label}`);
+  const [status, setStatus] = useState(() => text.status.loaded(SERVICES[0].label));
   const [isError, setIsError] = useState(false);
   const [message, setMessage] = useState("");
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
@@ -406,7 +783,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setEditingTurnID(null);
     setEditingPrompt("");
     setTurnVersionSelections({});
-    setStatus(`Loaded session: ${session.title}`);
+    setStatus(text.status.loadedSession(session.title));
     setIsError(false);
   };
 
@@ -416,7 +793,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setEditingTurnID(null);
     setEditingPrompt("");
     setTurnVersionSelections({});
-    setStatus("Cleared the current session.");
+    setStatus(text.status.clearedSession);
     setIsError(false);
   };
 
@@ -424,15 +801,16 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     () => buildCustomSkills(customPresets),
     [customPresets],
   );
+  const builtInSlashCommands = useMemo(
+    () => getLocalizedBuiltInCommands(text),
+    [text],
+  );
   const slashCommands = useMemo(
     () => [
-      NEW_CONVERSATION_COMMAND,
-      CURRENT_PDF_COMMAND,
-      WEB_SEARCH_COMMAND,
-      ZOTERO_MCP_COMMAND,
+      ...builtInSlashCommands,
       ...customSkills,
     ],
-    [customSkills],
+    [builtInSlashCommands, customSkills],
   );
   const selectedSkill =
     slashCommands.find((skill) => skill.id === selectedSkillID) || null;
@@ -471,8 +849,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     host.appendChild(frame);
     setStatus(
       service.id === "zai"
-        ? "Loaded Z.ai Web. Use Login Mode or Login Window if captcha needs more room."
-        : `Loaded ${service.label}. Sign in, then Send inserts prompts into the web chat.`,
+        ? text.status.loadedZai
+        : text.status.loaded(service.label),
     );
     setIsError(false);
 
@@ -486,7 +864,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         frameRef.current = null;
       }
     };
-  }, [hostWindow.document, service]);
+  }, [hostWindow.document, service, text]);
 
   useEffect(() => {
     if (!incomingPrompt) {
@@ -495,10 +873,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
     setMessage(incomingPrompt.prompt);
     setSelectedSkillID(null);
-    setStatus(`${incomingPrompt.label} is ready. Send inserts it into ${service.label}.`);
+    setStatus(text.status.incomingReady(incomingPrompt.label, service.label));
     setIsError(false);
     onIncomingPromptHandled?.(incomingPrompt.id);
-  }, [incomingPrompt, onIncomingPromptHandled, service.label]);
+  }, [incomingPrompt, onIncomingPromptHandled, service.label, text]);
 
   useEffect(() => {
     if (!shouldUseMCPInConversation(settings)) {
@@ -602,7 +980,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       status: "done",
       subtitle: options.subtitle || service.label,
       thinking: normalized.thinking,
-      title: options.title || "Captured web answer",
+      title: options.title || text.record.capturedWebAnswer,
       turnID: options.turnID,
       userPrompt: options.userPrompt,
     };
@@ -640,7 +1018,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       status: "running",
       subtitle: options.subtitle || service.label,
       thinking: normalized.thinking,
-      title: options.title || "Web answer",
+      title: options.title || text.record.webAnswer,
       turnID: options.turnID,
       userPrompt: options.userPrompt,
     });
@@ -652,7 +1030,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   ) => {
     const runId = ++assistantCaptureRunRef.current;
     try {
-      setStatus(`Waiting for ${service.label} answer...`);
+      setStatus(text.status.waiting(service.label));
       const captured = await waitForStableAssistantText(
         frameRef.current,
         baselineText || "",
@@ -668,14 +1046,12 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         return;
       }
       if (recordAssistantReply(captured, options)) {
-        setStatus(`Captured latest ${service.label} answer into Zotero WebAI.`);
+        setStatus(text.status.captured(service.label));
       }
     } catch (error) {
       ztoolkit.log("Web AI automatic capture failed:", error);
       if (runId === assistantCaptureRunRef.current) {
-        setStatus(
-          `Prompt sent. If the answer is not captured automatically, click Capture.`,
-        );
+        setStatus(text.status.promptSentCaptureNeeded);
         markPendingCaptureNeeded(options);
       }
     }
@@ -686,12 +1062,12 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       return;
     }
     replaceExecutionRecord(options.pendingRecordID, {
-      body: "Prompt sent to the web chat. If Zotero WebAI does not capture the answer automatically, wait for the web answer to finish and click Capture.",
+      body: formatPendingCaptureNeededBody(text),
       kind: options.kind || "assistant",
       sourcePrompt: options.sourcePrompt,
       status: "running",
       subtitle: options.subtitle || service.label,
-      title: "Capture needed",
+      title: text.record.captureNeeded,
       turnID: options.turnID,
       userPrompt: options.userPrompt,
     });
@@ -714,12 +1090,12 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     };
     const pendingRecordID = shouldCreatePendingReplyRecord(prompt)
         ? appendExecutionRecord({
-          body: formatPendingReplyBody(result, service.label, prompt.length),
+          body: formatPendingReplyBody(result, service.label, prompt.length, text),
           kind: nextCaptureOptions.kind || "assistant",
           sourcePrompt: nextCaptureOptions.sourcePrompt,
           status: "running",
           subtitle: nextCaptureOptions.subtitle || service.label,
-          title: nextCaptureOptions.title || "Web answer",
+          title: nextCaptureOptions.title || text.record.webAnswer,
           turnID: nextCaptureOptions.turnID,
           userPrompt: nextCaptureOptions.userPrompt,
         })
@@ -729,17 +1105,17 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       nextCaptureOptions.pendingRecordID = pendingRecordID;
     }
     if (result.ok && result.submitted) {
-      setStatus(
-        `${statusPrefix ? `${statusPrefix} ` : ""}Prompt sent to ${service.label}; waiting for result.`,
-      );
+      setStatus(text.status.promptSent(formatStatusPrefix(statusPrefix), service.label));
       void waitForAssistantReply(baselineText, nextCaptureOptions);
     } else if (result.ok) {
-      setStatus(
-        `${statusPrefix ? `${statusPrefix} ` : ""}Prompt inserted into ${service.label}. Send it in the web chat, then click Capture if needed.`,
-      );
+      setStatus(text.status.promptInserted(formatStatusPrefix(statusPrefix), service.label));
     } else {
       setStatus(
-        `${statusPrefix ? `${statusPrefix} ` : ""}Prompt copied (${prompt.length} characters). If it did not appear in ${service.label}, click the web chat box and paste.`,
+        text.status.promptCopied(
+          formatStatusPrefix(statusPrefix),
+          prompt.length,
+          service.label,
+        ),
       );
     }
     setIsError(false);
@@ -747,7 +1123,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
   const copyRecord = (record: WebAIExecutionRecord) => {
     copyTextToClipboard(formatMarkdownForDisplay(record.body));
-    setStatus(`Copied ${record.title}.`);
+    setStatus(text.status.copiedRecord(record.title));
     setIsError(false);
   };
 
@@ -777,7 +1153,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       if (!reusablePrompt && !contextSummary?.fullText?.trim()) {
         throw new Error(
           contextSummary?.blockingMessage ||
-            "Current PDF or Zotero item full text is unavailable.",
+            text.errors.currentPDFUnavailable,
         );
       }
       const prompt =
@@ -791,8 +1167,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           selectedSkill: CURRENT_PDF_COMMAND,
           webContext: "",
         });
-      await deliverPrompt(prompt, `Regenerating ${record.title}.`, {
-        ...buildPDFReplyRecordOptions(service.label),
+      await deliverPrompt(prompt, text.status.regenerating(record.title), {
+        ...buildPDFReplyRecordOptions(service.label, text),
         sourcePrompt: prompt,
         turnID,
         userPrompt,
@@ -804,11 +1180,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       record.sourcePrompt && record.kind !== "skill"
         ? record.sourcePrompt
         : buildRegeneratePrompt(record);
-    await deliverPrompt(prompt, `Regenerating ${record.title}.`, {
+    await deliverPrompt(prompt, text.status.regenerating(record.title), {
       kind: record.kind === "skill" ? "skill" : "assistant",
       sourcePrompt: prompt,
       subtitle: service.label,
-      title: `Regenerated: ${record.title}`,
+      title: `${text.buttons.regenerate}: ${record.title}`,
       turnID,
       userPrompt,
     });
@@ -816,18 +1192,18 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
   const appendRecordToNote = async (record: WebAIExecutionRecord) => {
     const noteID = await appendResultToZoteroNote(scope, record);
-    setStatus(`Appended ${record.title} to Zotero WebAI Notes (#${noteID}).`);
+    setStatus(text.status.appendNote(record.title, noteID));
     setIsError(false);
   };
 
   const captureAssistantReply = async () => {
     const result = await readLatestAssistantText(frameRef.current);
     if (!result.ok || !result.text?.trim()) {
-      throw new Error(result.reason || "No web chat text available");
+      throw new Error(result.reason || text.errors.noWebChatText);
     }
     const captured = extractLatestAssistantText(result.text);
     if (!captured) {
-      throw new Error("No assistant result found in the embedded web chat");
+      throw new Error(text.errors.noAssistantResult);
     }
     const pendingRecord = pendingCaptureRecordIDRef.current
       ? executionRecordsRef.current.find(
@@ -837,13 +1213,13 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     recordAssistantReply(
       captured,
       {
-        ...buildCommandReplyRecordOptions(selectedSkill, service.label),
+        ...buildCommandReplyRecordOptions(selectedSkill, service.label, text),
         pendingRecordID: pendingCaptureRecordIDRef.current || undefined,
         turnID: pendingRecord?.turnID,
         userPrompt: pendingRecord?.userPrompt,
       },
     );
-    setStatus(`Captured latest ${service.label} answer into Zotero WebAI.`);
+    setStatus(text.status.captured(service.label));
     setIsError(false);
   };
 
@@ -853,7 +1229,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     } catch (error) {
       const errorMessage =
         error instanceof Error && error.message ? error.message : String(error);
-      setStatus(`Failed: ${errorMessage}`);
+      setStatus(text.status.failed(errorMessage));
       setIsError(true);
       ztoolkit.log("Web AI action failed:", error);
     }
@@ -866,7 +1242,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     }
     setSelectedSkillID(skill.id);
     setMessage(removeSlashToken(message, [skill, ...slashCommands]).trimStart());
-    setStatus(formatSlashCommandStatus(skill));
+    setStatus(formatSlashCommandStatus(skill, text));
     setIsError(false);
   };
 
@@ -878,23 +1254,21 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
   const openServiceLoginWindow = () => {
     openLoginWindow(hostWindow, service);
-    setStatus(
-      `Opened a larger ${service.label} login window. After sign-in, return here and reload if needed.`,
-    );
+    setStatus(text.status.loginWindowOpened(service.label));
     setIsError(false);
   };
 
   const enterZAILoginMode = () => {
     setChatCollapsed(false);
     setZaiLoginMode(true);
-    setStatus("Z.ai Login Mode gives the captcha the full sidebar height.");
+    setStatus(text.status.zaiLoginMode);
     setIsError(false);
   };
 
   const exitZAILoginMode = () => {
     setChatCollapsed(false);
     setZaiLoginMode(false);
-    setStatus("Z.ai Chat Mode restored. Send inserts prompts into the web chat.");
+    setStatus(text.status.zaiChatRestored);
     setIsError(false);
   };
 
@@ -903,8 +1277,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setChatCollapsed(nextCollapsed);
     setStatus(
       nextCollapsed
-        ? `${service.label} display hidden. Click Show Chat to restore it.`
-        : `${service.label} display restored.`,
+        ? text.status.displayHidden(service.label)
+        : text.status.displayRestored(service.label),
     );
     setIsError(false);
   };
@@ -930,7 +1304,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     lastCapturedAssistantTextRef.current = "";
     assistantCaptureRunRef.current += 1;
     loadFrameElement(frameRef.current, service.url);
-    setStatus(`Started a new ${service.label} conversation.`);
+    setStatus(text.status.startedConversation(service.label));
   };
 
   const sendPrompt = async (
@@ -955,7 +1329,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       return;
     }
     if (!resolved.skill && !resolved.message.trim()) {
-      throw new Error("Write a message or choose a / command.");
+      throw new Error(text.errors.noMessageOrCommand);
     }
     if (isComposerSend) {
       setMessage("");
@@ -992,14 +1366,14 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         sourcePrompt: resolved.message,
         status: pdfTextLength ? "done" : "error",
         subtitle: `/${CURRENT_PDF_COMMAND.slashCommand}`,
-        title: "Current PDF command",
+        title: text.record.currentPDFCommand,
         turnID,
         userPrompt,
       });
       if (!pdfTextLength) {
         throw new Error(
           contextSummary?.blockingMessage ||
-            "Current PDF or Zotero item full text is unavailable.",
+            text.errors.currentPDFUnavailable,
         );
       }
     }
@@ -1042,7 +1416,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     if (isMCPCommand) {
       if (!mcpContext.contextText) {
         throw new Error(
-          mcpContext.status || "MCP unavailable; check that zotero-mcp is running.",
+          mcpContext.status || text.errors.mcpUnavailable,
         );
       }
       setStatus(
@@ -1069,7 +1443,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       prompt,
       [webContext.status, mcpContext.status].filter(Boolean).join(" ") || null,
       {
-        ...buildCommandReplyRecordOptions(resolved.skill, service.label),
+        ...buildCommandReplyRecordOptions(resolved.skill, service.label, text),
         sourcePrompt: prompt,
         turnID,
         userPrompt,
@@ -1116,14 +1490,14 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const beginEditingTurn = (turn: WebAITranscriptTurn, prompt: string) => {
     setEditingTurnID(turn.id);
     setEditingPrompt(prompt);
-    setStatus("Edit the user prompt in place, then save to generate a new answer.");
+    setStatus(text.status.editPrompt);
     setIsError(false);
   };
 
   const submitEditedTurn = async (turn: WebAITranscriptTurn) => {
     const prompt = editingPrompt.trim();
     if (!prompt) {
-      throw new Error("Edited prompt is empty.");
+      throw new Error(text.errors.editedPromptEmpty);
     }
     await sendPrompt(prompt, turn.id);
   };
@@ -1160,7 +1534,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             >
               <div style={styles.messageHeader}>
                 <span style={{ ...styles.messageAuthor, color: theme.text }}>
-                  User
+                  {text.labels.user}
                 </span>
                 <span style={{ ...styles.messageTimestamp, color: theme.mutedText }}>
                   {formatRecordTimestamp(record.createdAt)}
@@ -1200,7 +1574,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                       onClick={() => void runAction(() => submitEditedTurn(turn))}
                       type="button"
                     >
-                      Save
+                      {text.buttons.save}
                     </button>
                     <button
                       style={{
@@ -1214,7 +1588,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                       }}
                       type="button"
                     >
-                      Cancel
+                      {text.buttons.cancel}
                     </button>
                   </>
                 ) : (
@@ -1227,12 +1601,12 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                       }}
                       onClick={() => {
                         copyTextToClipboard(displayPrompt);
-                        setStatus("Copied user prompt.");
+                        setStatus(text.status.copiedUserPrompt);
                         setIsError(false);
                       }}
                       type="button"
                     >
-                      Copy
+                      {text.buttons.copy}
                     </button>
                     <button
                       style={{
@@ -1243,7 +1617,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                       onClick={() => void runAction(() => regenerateRecord(record))}
                       type="button"
                     >
-                      Regenerate
+                      {text.buttons.regenerate}
                     </button>
                     <button
                       style={{
@@ -1254,7 +1628,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                       onClick={() => beginEditingTurn(turn, displayPrompt)}
                       type="button"
                     >
-                      Edit
+                      {text.buttons.edit}
                     </button>
                   </>
                 )}
@@ -1325,7 +1699,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                     color: theme.mutedText,
                   }}
                 >
-                  Process hidden
+                  {text.labels.processHidden}
                 </summary>
                 <pre
                   style={{
@@ -1348,7 +1722,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 onClick={() => copyRecord(record)}
                 type="button"
               >
-                复制
+                {text.buttons.copy}
               </button>
               <button
                 style={{
@@ -1359,7 +1733,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 onClick={() => void runAction(() => regenerateRecord(record))}
                 type="button"
               >
-                重新生成
+                {text.buttons.regenerate}
               </button>
               <button
                 style={{
@@ -1370,7 +1744,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 onClick={() => void runAction(() => appendRecordToNote(record))}
                 type="button"
               >
-                追加笔记
+                {text.buttons.appendNote}
               </button>
             </div>
             )}
@@ -1387,7 +1761,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                   onClick={() => selectTurnVersion(turn.id, versionIndex - 1)}
                   type="button"
                 >
-                  Previous
+                  {text.buttons.previous}
                 </button>
                 <span style={{ ...styles.versionLabel, color: theme.mutedText }}>
                   {versionIndex + 1} / {turn.records.length}
@@ -1409,7 +1783,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                   onClick={() => selectTurnVersion(turn.id, versionIndex + 1)}
                   type="button"
                 >
-                  Next
+                  {text.buttons.next}
                 </button>
               </div>
             )}
@@ -1449,7 +1823,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         >
           <div style={styles.loginModeText}>
             <span style={{ ...styles.loginModeTitle, color: theme.text }}>
-              Z.ai Login Mode
+              {text.labels.zaiLoginMode}
             </span>
             <span
               style={{
@@ -1473,7 +1847,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               onClick={toggleChatFrame}
               type="button"
             >
-              {chatCollapsed ? "Show Web" : "Hide Web"}
+              {chatCollapsed ? text.buttons.showWeb : text.buttons.hideWeb}
             </button>
             <button
               style={{
@@ -1486,7 +1860,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               onClick={openServiceLoginWindow}
               type="button"
             >
-              Login Window
+              {text.buttons.loginWindow}
             </button>
             <button
               style={{
@@ -1500,7 +1874,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               }
               type="button"
             >
-              Reload
+              {text.buttons.reload}
             </button>
             <button
               style={{
@@ -1512,7 +1886,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               onClick={exitZAILoginMode}
               type="button"
             >
-              Chat Mode
+              {text.buttons.chatMode}
             </button>
             <button
               style={{
@@ -1524,7 +1898,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               onClick={() => openExternalURL(service.url)}
               type="button"
             >
-              External
+              {text.buttons.external}
             </button>
           </div>
         </div>
@@ -1564,7 +1938,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             onClick={toggleChatFrame}
             type="button"
           >
-            {chatCollapsed ? "Show Web" : "Hide Web"}
+            {chatCollapsed ? text.buttons.showWeb : text.buttons.hideWeb}
           </button>
           <button
             style={{
@@ -1578,7 +1952,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             }
             type="button"
           >
-            Reload
+            {text.buttons.reload}
           </button>
           {service.id === "zai" && (
             <>
@@ -1593,7 +1967,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 onClick={openServiceLoginWindow}
                 type="button"
               >
-                Login Window
+                {text.buttons.loginWindow}
               </button>
               <button
                 style={{
@@ -1605,7 +1979,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 onClick={enterZAILoginMode}
                 type="button"
               >
-                Login Mode
+                {text.buttons.loginMode}
               </button>
             </>
           )}
@@ -1619,7 +1993,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             onClick={() => void runAction(captureAssistantReply)}
             type="button"
           >
-            Capture
+            {text.buttons.capture}
           </button>
           {executionRecords.length > 0 && (
             <button
@@ -1632,7 +2006,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               onClick={clearCurrentSession}
               type="button"
             >
-              Clear
+              {text.buttons.clear}
             </button>
           )}
           <button
@@ -1647,7 +2021,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             onClick={() => setHistoryVisible((visible) => !visible)}
             type="button"
           >
-            History
+            {text.labels.history}
           </button>
           <button
             style={{
@@ -1661,7 +2035,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             onClick={() => setWebSearchEnabled((enabled) => !enabled)}
             type="button"
           >
-            Web Search
+            {text.buttons.webSearch}
           </button>
           <button
             style={{
@@ -1673,7 +2047,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             onClick={() => openExternalURL(service.url)}
             type="button"
           >
-            Open External
+            {text.buttons.openExternal}
           </button>
         </div>
       </div>
@@ -1690,11 +2064,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         >
           <div style={styles.executionHeader}>
             <span style={{ ...styles.executionTitle, color: theme.text }}>
-              Conversation
+              {text.labels.conversation}
             </span>
             <div style={styles.executionHeaderActions}>
               <span style={{ ...styles.executionMeta, color: theme.mutedText }}>
-                {transcriptTurns.length} turns / {chatSessions.length} sessions
+                {text.status.turnsSessions(transcriptTurns.length, chatSessions.length)}
               </span>
             </div>
           </div>
@@ -1709,7 +2083,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                 >
                   <div style={styles.historyHeader}>
                     <span style={{ ...styles.historyTitle, color: theme.text }}>
-                      History
+                      {text.labels.history}
                     </span>
                     <button
                       style={{
@@ -1720,7 +2094,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                       onClick={() => setHistoryVisible(false)}
                       type="button"
                     >
-                      Hide
+                      {text.buttons.hide}
                     </button>
                   </div>
                   <div style={styles.historyList}>
@@ -1731,7 +2105,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                           color: theme.mutedText,
                         }}
                       >
-                        No saved sessions yet.
+                        {text.labels.noSavedSessions}
                       </div>
                     )}
                     {chatSessions.map((session) => {
@@ -1765,7 +2139,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                             color: theme.mutedText,
                           }}
                         >
-                          {visibleCount} turns - {formatRecordTimestamp(session.updatedAt)}
+                          {text.status.turnCount(visibleCount)} - {formatRecordTimestamp(session.updatedAt)}
                         </span>
                       </button>
                       );
@@ -1783,7 +2157,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                       color: theme.mutedText,
                     }}
                   >
-                    Send a message to start a new turn, type / for commands, or use /new conversation to reset.
+                    {text.emptyConversation}
                   </div>
                 )}
               </div>
@@ -1848,7 +2222,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               color: theme.badgeText,
             }}
             onClick={() => setSelectedSkillID(null)}
-            title="Clear selected command"
+            title={text.status.clearSelectedCommandTitle}
             type="button"
           >
             /{selectedSkill.slashCommand} {selectedSkill.label}
@@ -1858,7 +2232,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         <textarea
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={handleKeyDown}
-          placeholder="Message in Markdown, /new conversation, or / for PDF, Web Search, Zotero MCP, Skills"
+          placeholder={text.composerPlaceholder}
           style={{
             ...styles.composerInput,
             background: "transparent",
@@ -1876,7 +2250,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           >
             {customSkills.length
               ? status
-              : "Type / for PDF, Web Search, Zotero MCP, or custom skills."}
+              : text.defaultStatus}
           </div>
           <button
             style={{
@@ -1886,10 +2260,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               color: theme.badgeText,
             }}
             onClick={() => void runAction(sendPrompt)}
-            title="Insert prompt into the web chat, with clipboard fallback"
+            title={text.status.sendTitle}
             type="button"
           >
-            Send
+            {text.buttons.send}
           </button>
         </div>
         </div>
@@ -1916,20 +2290,20 @@ function buildCustomSkills(customPresetsValue: string): WebAISkill[] {
     });
 }
 
-function formatSlashCommandStatus(skill: WebAISkill): string {
+function formatSlashCommandStatus(skill: WebAISkill, text: WebAIStrings): string {
   if (skill.kind === "new") {
-    return "Start a new conversation and clear the current web chat context.";
+    return text.status.slashNew;
   }
   if (skill.kind === "pdf") {
-    return "Current PDF selected. Send to attach the current PDF/item full text to this prompt.";
+    return text.status.slashPDF;
   }
   if (skill.kind === "web") {
-    return "Web Search selected. Send to search the web and attach the results.";
+    return text.status.slashWeb;
   }
   if (skill.kind === "mcp") {
-    return "Zotero MCP selected. Send to load zotero-mcp tools; the web model can request real tool calls.";
+    return text.status.slashMCP;
   }
-  return `Skill /${skill.slashCommand} selected. Write your question and send.`;
+  return text.status.slashSkill(skill.slashCommand);
 }
 
 function buildRecordUserPrompt(
@@ -3937,13 +4311,13 @@ function normalizeChatSession(value: unknown): WebAIChatSession | null {
   );
   const now = new Date().toISOString();
   const serviceID: WebAIServiceId =
-    source.serviceID === "zai" ? "zai" : "deepseek";
+    source.serviceID === "zai" || source.serviceID === "chatgpt"
+      ? source.serviceID
+      : "deepseek";
   const serviceLabel =
     typeof source.serviceLabel === "string" && source.serviceLabel.trim()
       ? source.serviceLabel.trim()
-      : serviceID === "zai"
-        ? "Z.ai Web"
-        : "DeepSeek Web";
+      : getServiceByID(serviceID).label;
   return {
     createdAt:
       typeof source.createdAt === "string" && source.createdAt
@@ -4233,14 +4607,25 @@ function formatPendingReplyBody(
   result: PromptInsertResult,
   serviceLabel: string,
   promptLength: number,
+  text: WebAIStrings,
 ): string {
   if (result.ok && result.submitted) {
-    return `Prompt sent to ${serviceLabel}. Waiting for the web answer...`;
+    return text.status.promptSent("", serviceLabel);
   }
   if (result.ok) {
-    return `Prompt inserted into ${serviceLabel}. Send it in the web chat, then click Capture if Zotero WebAI does not capture the answer automatically.`;
+    return text.status.promptInserted("", serviceLabel);
   }
-  return `Prompt copied (${promptLength} characters). If it did not appear in ${serviceLabel}, click the web chat box and paste, then click Capture after the answer finishes.`;
+  return text.status.promptCopied("", promptLength, serviceLabel);
+}
+
+function formatPendingCaptureNeededBody(text: WebAIStrings): string {
+  return text === ZH_STRINGS
+    ? "提示词已发送到网页对话。如果 Zotero WebAI 没有自动捕获回复，请等待网页回复完成后点击捕获。"
+    : "Prompt sent to the web chat. If Zotero WebAI does not capture the answer automatically, wait for the web answer to finish and click Capture.";
+}
+
+function formatStatusPrefix(prefix?: string | null): string {
+  return prefix ? `${prefix} ` : "";
 }
 
 function getRecordKindLabel(kind: WebAIExecutionKind): string {
@@ -4419,35 +4804,37 @@ function formatSkillExecutionBody({
 function buildSkillReplyRecordOptions(
   skill: WebAISkill,
   serviceLabel: string,
+  text: WebAIStrings,
 ): AssistantReplyRecordOptions {
   return {
     kind: "skill",
     subtitle: `/${skill.slashCommand} via ${serviceLabel}`,
-    title: `Skill result: ${skill.label}`,
+    title: text.record.skillResult(skill.label),
   };
 }
 
 function buildCommandReplyRecordOptions(
   skill: WebAISkill | null,
   serviceLabel: string,
+  text: WebAIStrings,
 ): AssistantReplyRecordOptions {
   if (!skill) {
     return {};
   }
   if (skill.kind === "skill") {
-    return buildSkillReplyRecordOptions(skill, serviceLabel);
+    return buildSkillReplyRecordOptions(skill, serviceLabel, text);
   }
   if (skill.kind === "mcp") {
-    return buildMCPReplyRecordOptions(serviceLabel);
+    return buildMCPReplyRecordOptions(serviceLabel, text);
   }
   if (skill.kind === "pdf") {
-    return buildPDFReplyRecordOptions(serviceLabel);
+    return buildPDFReplyRecordOptions(serviceLabel, text);
   }
   if (skill.kind === "web") {
     return {
       kind: "assistant",
       subtitle: `/${WEB_SEARCH_COMMAND.slashCommand} via ${serviceLabel}`,
-      title: "Web-search answer",
+      title: text.record.webSearchAnswer,
     };
   }
   return {};
@@ -4455,21 +4842,23 @@ function buildCommandReplyRecordOptions(
 
 function buildPDFReplyRecordOptions(
   serviceLabel: string,
+  text: WebAIStrings,
 ): AssistantReplyRecordOptions {
   return {
     kind: "pdf",
     subtitle: `/${CURRENT_PDF_COMMAND.slashCommand} via ${serviceLabel}`,
-    title: "PDF-assisted answer",
+    title: text.record.pdfAssistedAnswer,
   };
 }
 
 function buildMCPReplyRecordOptions(
   serviceLabel: string,
+  text: WebAIStrings,
 ): AssistantReplyRecordOptions {
   return {
     kind: "mcp",
     subtitle: `/${ZOTERO_MCP_COMMAND.slashCommand} via ${serviceLabel}`,
-    title: "MCP-assisted answer",
+    title: text.record.mcpAssistedAnswer,
   };
 }
 
@@ -5006,14 +5395,14 @@ function stripAssistantWebNoise(value: string): string {
     .replace(/本回答由\s*AI\s*生成[，,]?\s*内容仅供参考[，,]?\s*请仔细甄别/g, "")
     .replace(/内容由\s*AI\s*生成[，,]?\s*请仔细甄别/g, "");
   const noiseLinePattern =
-    /^(深度思考|智能搜索|联网搜索|搜索|复制|分享|重新生成|停止生成|继续生成|给\s*(DeepSeek|Z\.ai)\s*发送消息)$/i;
+    /^(深度思考|智能搜索|联网搜索|搜索|复制|分享|重新生成|停止生成|继续生成|给\s*(DeepSeek|Z\.ai|ChatGPT)\s*发送消息)$/i;
   return text
     .split(/\n/)
     .map((line) => line.trim())
     .filter((line) => line && !noiseLinePattern.test(line))
     .filter(
       (line) =>
-        !/^(deep think|thinking|reasoning|search|web search|copy|copied|share|regenerate|retry|stop generating|continue generating|continue|edit|delete|like|dislike|复制|已复制|分享|重新生成|重试|停止生成|继续生成|继续|编辑|删除|点赞|点踩|深度思考|推理过程|思考过程|智能搜索|联网搜索|搜索|给\s*(DeepSeek|Z\.ai)\s*发送消息)$/i.test(
+        !/^(deep think|thinking|reasoning|search|web search|copy|copied|share|regenerate|retry|stop generating|continue generating|continue|edit|delete|like|dislike|复制|已复制|分享|重新生成|重试|停止生成|继续生成|继续|编辑|删除|点赞|点踩|深度思考|推理过程|思考过程|智能搜索|联网搜索|搜索|给\s*(DeepSeek|Z\.ai|ChatGPT)\s*发送消息)$/i.test(
           line,
         ),
     )
