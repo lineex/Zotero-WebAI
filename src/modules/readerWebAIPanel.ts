@@ -836,14 +836,14 @@ function ensureHostStyle(doc: Document): void {
       direction: rtl;
       display: flex;
       flex-direction: column;
-      flex: 0 0 clamp(${MIN_PANEL_WIDTH}px, 34vw, ${DEFAULT_PANEL_WIDTH}px);
+      flex: 1 1 auto;
       height: 100%;
-      max-width: min(${MAX_PANEL_WIDTH}px, 60vw);
-      min-width: ${MIN_PANEL_WIDTH}px;
-      overflow: hidden;
+      max-width: 100%;
+      min-width: 0;
+      overflow: auto;
       position: relative;
-      resize: horizontal;
-      width: clamp(${MIN_PANEL_WIDTH}px, 34vw, ${DEFAULT_PANEL_WIDTH}px);
+      resize: vertical;
+      width: 100%;
       z-index: 1;
     }
     #${PANEL_ID}.zotero-webai-reader-panel > * {
