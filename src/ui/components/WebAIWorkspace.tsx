@@ -3026,6 +3026,41 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
       .replace(/\n{3,}/g, "\n\n")
       .trim();
 
+  const stripAssistantDisclaimerLines = (value: string) =>
+    normalizeText(value)
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !isAssistantDisclaimerLine(line))
+      .join("\n")
+      .trim();
+
+  const isUsableAssistantText = (value: string) => {
+    const withoutDisclaimer = stripAssistantDisclaimerLines(value);
+    return Boolean(withoutDisclaimer && withoutDisclaimer.length >= 2);
+  };
+
+  const getAssistantContentElement = (element: Element) => {
+    const contentSelectors = [
+      "[data-testid*='assistant-message']",
+      "[class*='markdown']",
+      "[class*='Markdown']",
+      "[class*='prose']",
+      "[class*='ds-markdown']",
+      "[class*='markdown-body']",
+    ];
+    for (const selector of contentSelectors) {
+      try {
+        const content = element.querySelector(selector);
+        if (content) {
+          return content;
+        }
+      } catch {
+        // Ignore selector incompatibilities in embedded pages.
+      }
+    }
+    return element;
+  };
+
   const getElementText = (element: Element) => {
     const textSource = element.cloneNode(true) as Element;
     textSource
@@ -3048,7 +3083,7 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
           .map((line) => line.trim())
           .filter(Boolean)
           .join("\n");
-    return normalized
+    const cleaned = normalized
       .split("\n")
       .filter((line) => !noiseLinePattern.test(line.trim()))
       .filter(
@@ -3059,6 +3094,7 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
       )
       .join("\n")
       .trim();
+    return stripAssistantDisclaimerLines(cleaned);
   };
 
   const isVisible = (element: Element) => {
@@ -3080,8 +3116,10 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
   };
 
   const candidateSelectors = [
-    "[data-testid*='assistant-message']",
+    "[data-message-author-role='assistant'] [class*='markdown']",
+    "[data-message-author-role='assistant'] [class*='prose']",
     "[data-message-author-role='assistant']",
+    "[data-testid*='assistant-message']",
     "[data-role='assistant']",
     "[data-author='assistant']",
     "[data-from='assistant']",
@@ -3117,8 +3155,55 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
     }
   }
 
+  const strictAssistantSelectors = [
+    "[data-message-author-role='assistant']",
+    "[data-testid*='assistant-message']",
+    "[data-role='assistant']",
+    "[data-author='assistant']",
+    "[data-from='assistant']",
+    "[class*='assistant-message']",
+  ];
+  const strictCandidates = new Set<Element>();
+  for (const selector of strictAssistantSelectors) {
+    try {
+      root
+        .querySelectorAll(selector)
+        .forEach((node: Element) => strictCandidates.add(node));
+    } catch {
+      // Some embedded pages do not support every selector variant.
+    }
+  }
+
+  const strictRanked = Array.from(strictCandidates)
+    .map((element, index) => {
+      const contentElement = getAssistantContentElement(element);
+      const text = getElementText(contentElement);
+      const rect = (element as HTMLElement).getBoundingClientRect?.();
+      return {
+        element,
+        index,
+        rectBottom: rect?.bottom || 0,
+        text,
+      };
+    })
+    .filter(
+      (candidate) =>
+        isVisible(candidate.element) && isUsableAssistantText(candidate.text),
+    )
+    .sort((left, right) => {
+      if (right.rectBottom !== left.rectBottom) {
+        return right.rectBottom - left.rectBottom;
+      }
+      return right.index - left.index;
+    });
+
+  const strictBest = strictRanked[0]?.text || "";
+  if (strictBest) {
+    return strictBest.slice(-scanLimit);
+  }
+
   const scoreCandidate = (element: Element, text: string) => {
-    if (!isVisible(element) || text.length < 2) {
+    if (!isVisible(element) || !isUsableAssistantText(text)) {
       return Number.NEGATIVE_INFINITY;
     }
 
@@ -3167,6 +3252,9 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
     }
     if (/User message:|Zotero context:|Paper content:|Final answer format:/i.test(text)) {
       score -= 16000;
+    }
+    if (text.split("\n").every((line) => isAssistantDisclaimerLine(line))) {
+      score -= 50000;
     }
 
     return score;
@@ -3712,6 +3800,7 @@ ${insertPromptIntoDocument.toString()}`;
 
 function readLatestAssistantTextFromDocumentSource(): string {
   return `${readLatestAssistantPlainTextFromDocument.toString()}
+${isAssistantDisclaimerLine.toString()}
 ${elementHasMarkdownStructure.toString()}
 ${serializeElementToMarkdown.toString()}
 ${serializeMarkdownNode.toString()}
@@ -5263,6 +5352,21 @@ function normalizeWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
 }
 
+function isAssistantDisclaimerLine(value: string): boolean {
+  const line = String(value || "").replace(/\s+/g, " ").trim();
+  if (!line) {
+    return false;
+  }
+  return (
+    /^ChatGPT\s+(?:can|may)\s+make\s+mistakes\.?\s*(?:Check\s+important\s+(?:info|information)\.?)?$/i.test(
+      line,
+    ) ||
+    /^ChatGPT\s*(?:\u4e5f\u53ef\u80fd\u4f1a\u72af\u9519|\u53ef\u80fd\u4f1a\u72af\u9519|\u4e5f\u53ef\u80fd\u6703\u72af\u932f|\u53ef\u80fd\u6703\u72af\u932f)[\u3002.]?\s*(?:\u8bf7\u6838\u67e5\u91cd\u8981\u4fe1\u606f|\u8bf7\u67e5\u6838\u91cd\u8981\u4fe1\u606f|\u8acb\u6838\u67e5\u91cd\u8981\u8cc7\u8a0a|\u8acb\u67e5\u6838\u91cd\u8981\u8cc7\u8a0a)[\u3002.]?$/.test(
+      line,
+    )
+  );
+}
+
 function escapeHTML(value: string): string {
   return value
     .replace(/&/g, "&amp;")
@@ -5399,7 +5503,10 @@ function stripAssistantWebNoise(value: string): string {
   return text
     .split(/\n/)
     .map((line) => line.trim())
-    .filter((line) => line && !noiseLinePattern.test(line))
+    .filter(
+      (line) =>
+        line && !noiseLinePattern.test(line) && !isAssistantDisclaimerLine(line),
+    )
     .filter(
       (line) =>
         !/^(deep think|thinking|reasoning|search|web search|copy|copied|share|regenerate|retry|stop generating|continue generating|continue|edit|delete|like|dislike|复制|已复制|分享|重新生成|重试|停止生成|继续生成|继续|编辑|删除|点赞|点踩|深度思考|推理过程|思考过程|智能搜索|联网搜索|搜索|给\s*(DeepSeek|Z\.ai|ChatGPT)\s*发送消息)$/i.test(
