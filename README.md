@@ -65,6 +65,12 @@ Default tool argument template:
 {"q":"{{query}}","limit":1000,"mode":"preview"}
 ```
 
+## Support
+
+Development takes time, attention, and tokens. If Zotero WebAI helps your reading workflow, you can buy me a coffee.
+
+<img src="docs/reward-code.png" alt="Buy me a coffee reward code" width="260" />
+
 ## Build
 
 ```bash
