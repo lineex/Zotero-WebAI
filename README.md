@@ -1,6 +1,6 @@
 # Zotero WebAI
 
-Chinese README: [README.zh-CN.md](README.zh-CN.md).
+Chines: [README.zh-CN.md](README.zh-CN.md).
 
 Zotero WebAI is a Zotero 9 reading workspace that embeds DeepSeek Web, Z.ai Web, and ChatGPT Web beside the current Zotero library item or PDF reader. It requires no model API key: sign in inside the embedded web page and use the Zotero-side chat box to send Zotero context, slash commands, custom skills, and real MCP tool results into the web chat.
 
