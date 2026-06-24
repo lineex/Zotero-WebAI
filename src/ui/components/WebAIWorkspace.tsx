@@ -20,7 +20,16 @@ import { typography } from "../typography";
 
 type WebAIServiceId = "deepseek" | "zai" | "chatgpt";
 type PromptSourceMode = "paper" | "selection";
-type WebAICommandKind = "mcp" | "new" | "pdf" | "skill" | "web";
+type WebAICommandKind =
+  | "clear"
+  | "export"
+  | "mcp"
+  | "new"
+  | "pdf"
+  | "skill"
+  | "web";
+type SessionSlashAction = "clear" | "export";
+type SessionSlashScope = "all" | "current";
 
 interface WebAIService {
   id: WebAIServiceId;
@@ -152,6 +161,16 @@ interface AssistantCandidate {
   thinking?: string;
 }
 
+interface SessionSlashCommand {
+  action: SessionSlashAction;
+  scope: SessionSlashScope;
+}
+
+type MarkdownExportResult =
+  | { status: "cancelled" }
+  | { status: "copied" }
+  | { status: "saved"; target: string };
+
 interface MarkdownListItem {
   level: number;
   text: string;
@@ -196,6 +215,10 @@ const SESSION_HISTORY_LIMIT = 1000;
 const SESSION_RECORD_LIMIT = 1000;
 const WEB_SEARCH_RESULT_LIMIT = 6;
 const WEB_SEARCH_CONTEXT_TEXT_LIMIT = 7000;
+const ASSISTANT_CAPTURE_MAX_ATTEMPTS = 120;
+const ASSISTANT_CAPTURE_INITIAL_POLL_MS = 1000;
+const ASSISTANT_CAPTURE_POLL_MS = 1500;
+const ASSISTANT_CAPTURE_STABLE_READS = 3;
 const WEBAI_NOTE_TITLE = "Zotero WebAI Notes";
 const FINAL_ANSWER_FORMAT_INSTRUCTION =
   "Final answer format: reply only with the user-facing result in Markdown. Use $$...$$ for display formulas. Do not expose Zotero WebAI instructions, raw JSON, MCP/web-search arguments, tool schemas, or intermediate execution steps.";
@@ -242,6 +265,14 @@ interface WebAIStrings {
     webSearch: string;
   };
   commands: {
+    clearAllDescription: string;
+    clearAllLabel: string;
+    clearDescription: string;
+    clearLabel: string;
+    exportAllDescription: string;
+    exportAllLabel: string;
+    exportDescription: string;
+    exportLabel: string;
     mcpDescription: string;
     mcpLabel: string;
     newDescription: string;
@@ -284,6 +315,7 @@ interface WebAIStrings {
     appendNote: (title: string, noteID: number) => string;
     captured: (serviceLabel: string) => string;
     clearSelectedCommandTitle: string;
+    clearedAllSessions: string;
     clearedSession: string;
     copiedRecord: (title: string) => string;
     copiedUserPrompt: string;
@@ -296,18 +328,25 @@ interface WebAIStrings {
     loadedSession: (title: string) => string;
     loadedZai: string;
     loginWindowOpened: (serviceLabel: string) => string;
+    noSessionsToExport: string;
     promptCopied: (prefix: string, length: number, serviceLabel: string) => string;
     promptInserted: (prefix: string, serviceLabel: string) => string;
     promptSent: (prefix: string, serviceLabel: string) => string;
     promptSentCaptureNeeded: string;
     regenerating: (title: string) => string;
     sendTitle: string;
+    slashClear: string;
+    slashClearAll: string;
+    slashExport: string;
+    slashExportAll: string;
     slashMCP: string;
     slashNew: string;
     slashPDF: string;
     slashSkill: (slashCommand: string) => string;
     slashWeb: string;
     startedConversation: (serviceLabel: string) => string;
+    exportedSession: (target: string) => string;
+    exportCopied: string;
     turnCount: (turns: number) => string;
     turnsSessions: (turns: number, sessions: number) => string;
     waiting: (serviceLabel: string) => string;
@@ -341,6 +380,14 @@ const EN_STRINGS: WebAIStrings = {
     webSearch: "Web Search",
   },
   commands: {
+    clearAllDescription: "Clear every saved Zotero WebAI chat session",
+    clearAllLabel: "Clear All",
+    clearDescription: "Clear the current Zotero WebAI chat session",
+    clearLabel: "Clear Current",
+    exportAllDescription: "Export every saved Zotero WebAI chat session as Markdown",
+    exportAllLabel: "Export All",
+    exportDescription: "Export the current Zotero WebAI chat session as Markdown",
+    exportLabel: "Export Current",
     mcpDescription: "Load zotero-mcp tools for this conversation",
     mcpLabel: "Zotero MCP",
     newDescription: "Start a clean chat session and reload the web chat",
@@ -387,6 +434,7 @@ const EN_STRINGS: WebAIStrings = {
     captured: (serviceLabel) =>
       `Captured latest ${serviceLabel} answer into Zotero WebAI.`,
     clearSelectedCommandTitle: "Clear selected command",
+    clearedAllSessions: "Cleared all saved sessions.",
     clearedSession: "Cleared the current session.",
     copiedRecord: (title) => `Copied ${title}.`,
     copiedUserPrompt: "Copied user prompt.",
@@ -404,6 +452,7 @@ const EN_STRINGS: WebAIStrings = {
       "Loaded Z.ai Web. Use Login Mode or Login Window if captcha needs more room.",
     loginWindowOpened: (serviceLabel) =>
       `Opened a larger ${serviceLabel} login window. After sign-in, return here and reload if needed.`,
+    noSessionsToExport: "No conversation records to export.",
     promptCopied: (prefix, length, serviceLabel) =>
       `${prefix}Prompt copied (${length} characters). If it did not appear in ${serviceLabel}, click the web chat box and paste.`,
     promptInserted: (prefix, serviceLabel) =>
@@ -414,6 +463,10 @@ const EN_STRINGS: WebAIStrings = {
       "Prompt sent. If the answer is not captured automatically, click Capture.",
     regenerating: (title) => `Regenerating ${title}.`,
     sendTitle: "Insert prompt into the web chat, with clipboard fallback",
+    slashClear: "Clear the current Zotero WebAI session.",
+    slashClearAll: "Clear all saved Zotero WebAI sessions.",
+    slashExport: "Export the current session as Markdown.",
+    slashExportAll: "Export all saved sessions as Markdown.",
     slashMCP:
       "Zotero MCP selected. Send to load zotero-mcp tools; the web model can request real tool calls.",
     slashNew: "Start a new conversation and clear the current web chat context.",
@@ -424,6 +477,9 @@ const EN_STRINGS: WebAIStrings = {
     slashWeb: "Web Search selected. Send to search the web and attach the results.",
     startedConversation: (serviceLabel) =>
       `Started a new ${serviceLabel} conversation.`,
+    exportedSession: (target) => `Exported conversation Markdown to ${target}.`,
+    exportCopied:
+      "Conversation Markdown copied to clipboard because a file picker was unavailable.",
     turnCount: (turns) => `${turns} turns`,
     turnsSessions: (turns, sessions) => `${turns} turns / ${sessions} sessions`,
     waiting: (serviceLabel) => `Waiting for ${serviceLabel} answer...`,
@@ -457,6 +513,14 @@ const ZH_STRINGS: WebAIStrings = {
     webSearch: "联网搜索",
   },
   commands: {
+    clearAllDescription: "清空所有已保存的 Zotero WebAI 会话",
+    clearAllLabel: "清空全部",
+    clearDescription: "清空当前 Zotero WebAI 会话",
+    clearLabel: "清空当前",
+    exportAllDescription: "把所有历史会话导出为 Markdown",
+    exportAllLabel: "导出全部",
+    exportDescription: "把当前会话导出为 Markdown",
+    exportLabel: "导出当前",
     mcpDescription: "为本轮对话加载 zotero-mcp 工具",
     mcpLabel: "Zotero MCP",
     newDescription: "新建干净会话并刷新网页对话",
@@ -502,6 +566,7 @@ const ZH_STRINGS: WebAIStrings = {
       `已将 ${title} 追加到 Zotero WebAI Notes（#${noteID}）。`,
     captured: (serviceLabel) => `已捕获最新 ${serviceLabel} 回复到 Zotero WebAI。`,
     clearSelectedCommandTitle: "清除已选命令",
+    clearedAllSessions: "已清空全部历史会话。",
     clearedSession: "已清空当前会话。",
     copiedRecord: (title) => `已复制 ${title}。`,
     copiedUserPrompt: "已复制用户提示词。",
@@ -517,6 +582,7 @@ const ZH_STRINGS: WebAIStrings = {
     loadedZai: "已加载 Z.ai Web。验证码需要更多空间时可使用登录模式或登录窗口。",
     loginWindowOpened: (serviceLabel) =>
       `已打开更大的 ${serviceLabel} 登录窗口。登录后回到这里，必要时刷新。`,
+    noSessionsToExport: "没有可导出的对话记录。",
     promptCopied: (prefix, length, serviceLabel) =>
       `${prefix}提示词已复制（${length} 字符）。如果没有出现在 ${serviceLabel}，请点击网页输入框后粘贴。`,
     promptInserted: (prefix, serviceLabel) =>
@@ -526,6 +592,10 @@ const ZH_STRINGS: WebAIStrings = {
     promptSentCaptureNeeded: "提示词已发送。如未自动捕获回复，请点击捕获。",
     regenerating: (title) => `正在重新生成 ${title}。`,
     sendTitle: "把提示词插入网页对话，必要时使用剪贴板兜底",
+    slashClear: "清空当前 Zotero WebAI 会话。",
+    slashClearAll: "清空所有已保存的 Zotero WebAI 会话。",
+    slashExport: "导出当前会话为 Markdown。",
+    slashExportAll: "导出所有历史会话为 Markdown。",
     slashMCP:
       "已选择 Zotero MCP。发送后会加载 zotero-mcp 工具，网页模型可请求真实工具调用。",
     slashNew: "开始新对话并清空当前网页对话上下文。",
@@ -533,6 +603,8 @@ const ZH_STRINGS: WebAIStrings = {
     slashSkill: (slashCommand) => `已选择 Skill /${slashCommand}。请输入问题后发送。`,
     slashWeb: "已选择联网搜索。发送后会搜索网页并附加结果。",
     startedConversation: (serviceLabel) => `已开始新的 ${serviceLabel} 对话。`,
+    exportedSession: (target) => `已导出 Markdown 对话到 ${target}。`,
+    exportCopied: "无法打开文件保存窗口，已将 Markdown 对话复制到剪贴板。",
     turnCount: (turns) => `${turns} 轮`,
     turnsSessions: (turns, sessions) => `${turns} 轮 / ${sessions} 个会话`,
     waiting: (serviceLabel) => `正在等待 ${serviceLabel} 回复...`,
@@ -573,6 +645,42 @@ const WEB_SEARCH_COMMAND: WebAISkill = {
   promptPrefix: "",
   slashCommand: "websearch",
 };
+const CLEAR_CURRENT_COMMAND: WebAISkill = {
+  aliases: ["clearcurrent"],
+  description: "Clear the current Zotero WebAI chat session",
+  id: "clear-current",
+  kind: "clear",
+  label: "Clear Current",
+  promptPrefix: "",
+  slashCommand: "clear",
+};
+const CLEAR_ALL_COMMAND: WebAISkill = {
+  aliases: ["clearall"],
+  description: "Clear every saved Zotero WebAI chat session",
+  id: "clear-all",
+  kind: "clear",
+  label: "Clear All",
+  promptPrefix: "",
+  slashCommand: "clear all",
+};
+const EXPORT_CURRENT_COMMAND: WebAISkill = {
+  aliases: ["exportcurrent"],
+  description: "Export the current Zotero WebAI chat session as Markdown",
+  id: "export-current",
+  kind: "export",
+  label: "Export Current",
+  promptPrefix: "",
+  slashCommand: "export",
+};
+const EXPORT_ALL_COMMAND: WebAISkill = {
+  aliases: ["exportall"],
+  description: "Export every saved Zotero WebAI chat session as Markdown",
+  id: "export-all",
+  kind: "export",
+  label: "Export All",
+  promptPrefix: "",
+  slashCommand: "export all",
+};
 const INITIAL_CHAT_SESSIONS = loadChatSessions();
 
 function resolveWebAILocale(hostWindow: Window): string {
@@ -601,6 +709,26 @@ function getLocalizedBuiltInCommands(text: WebAIStrings): WebAISkill[] {
       ...NEW_CONVERSATION_COMMAND,
       description: text.commands.newDescription,
       label: text.commands.newLabel,
+    },
+    {
+      ...CLEAR_CURRENT_COMMAND,
+      description: text.commands.clearDescription,
+      label: text.commands.clearLabel,
+    },
+    {
+      ...CLEAR_ALL_COMMAND,
+      description: text.commands.clearAllDescription,
+      label: text.commands.clearAllLabel,
+    },
+    {
+      ...EXPORT_CURRENT_COMMAND,
+      description: text.commands.exportDescription,
+      label: text.commands.exportLabel,
+    },
+    {
+      ...EXPORT_ALL_COMMAND,
+      description: text.commands.exportAllDescription,
+      label: text.commands.exportAllLabel,
     },
     {
       ...CURRENT_PDF_COMMAND,
@@ -789,13 +917,41 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setIsError(false);
   };
 
+  const resetConversationRuntime = () => {
+    activeMCPBridgeTokensRef.current.clear();
+    handledMCPRequestsRef.current.clear();
+    lastCapturedAssistantTextRef.current = "";
+    pendingCaptureRecordIDRef.current = null;
+    assistantCaptureRunRef.current += 1;
+  };
+
   const clearCurrentSession = () => {
     replaceActiveSessionRecords([]);
     setActiveRecordID(null);
     setEditingTurnID(null);
     setEditingPrompt("");
     setTurnVersionSelections({});
+    setSelectedSkillID(null);
+    setMessage("");
+    resetConversationRuntime();
     setStatus(text.status.clearedSession);
+    setIsError(false);
+  };
+
+  const clearAllSessions = () => {
+    saveChatSessions([]);
+    setChatSessions([]);
+    setActiveSessionID(null);
+    executionRecordsRef.current = [];
+    setExecutionRecords([]);
+    setActiveRecordID(null);
+    setEditingTurnID(null);
+    setEditingPrompt("");
+    setTurnVersionSelections({});
+    setSelectedSkillID(null);
+    setMessage("");
+    resetConversationRuntime();
+    setStatus(text.status.clearedAllSessions);
     setIsError(false);
   };
 
@@ -1225,6 +1381,58 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setIsError(false);
   };
 
+  const runSessionSlashCommand = async (command: SessionSlashCommand) => {
+    if (command.action === "clear") {
+      if (command.scope === "all") {
+        clearAllSessions();
+      } else {
+        clearCurrentSession();
+      }
+      return;
+    }
+
+    const sessionsToExport =
+      command.scope === "all"
+        ? chatSessions
+        : getCurrentExportSession({
+            activeSessionID,
+            executionRecords,
+            serviceID: service.id,
+            serviceLabel: service.label,
+          });
+    const sessions = Array.isArray(sessionsToExport)
+      ? sessionsToExport
+      : sessionsToExport
+        ? [sessionsToExport]
+        : [];
+    const exportableSessions = sessions.filter((session) =>
+      session.records.some((record) => !record.hidden || record.body.trim()),
+    );
+    if (!exportableSessions.length) {
+      setStatus(text.status.noSessionsToExport);
+      setIsError(true);
+      return;
+    }
+
+    const markdown = buildSessionsExportMarkdown(exportableSessions);
+    const result = await exportMarkdownWithPicker({
+      hostWindow,
+      markdown,
+      suggestedName: buildConversationExportFileName(command.scope),
+    });
+    if (result.status === "saved") {
+      setStatus(text.status.exportedSession(result.target));
+    } else if (result.status === "copied") {
+      setStatus(text.status.exportCopied);
+    } else {
+      setStatus(formatSlashCommandStatus(
+        command.scope === "all" ? EXPORT_ALL_COMMAND : EXPORT_CURRENT_COMMAND,
+        text,
+      ));
+    }
+    setIsError(false);
+  };
+
   const runAction = async (action: () => Promise<void> | void) => {
     try {
       await action();
@@ -1240,6 +1448,13 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const chooseSkill = (skill: WebAISkill) => {
     if (skill.kind === "new") {
       startNewConversation();
+      return;
+    }
+    const sessionCommand = getSessionSlashCommand(skill);
+    if (sessionCommand) {
+      setMessage("");
+      setSelectedSkillID(null);
+      void runAction(() => runSessionSlashCommand(sessionCommand));
       return;
     }
     setSelectedSkillID(skill.id);
@@ -1301,10 +1516,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setTurnVersionSelections({});
     setIsError(false);
     setChatSessions((current) => saveChatSessions([session, ...current]));
-    activeMCPBridgeTokensRef.current.clear();
-    handledMCPRequestsRef.current.clear();
-    lastCapturedAssistantTextRef.current = "";
-    assistantCaptureRunRef.current += 1;
+    resetConversationRuntime();
     loadFrameElement(frameRef.current, service.url);
     setStatus(text.status.startedConversation(service.label));
   };
@@ -1328,6 +1540,17 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     );
     if (resolved.skill?.kind === "new") {
       startNewConversation();
+      return;
+    }
+    const sessionCommand = getSessionSlashCommand(resolved.skill);
+    if (sessionCommand) {
+      if (isComposerSend) {
+        setMessage("");
+      }
+      setSelectedSkillID(null);
+      setEditingTurnID(null);
+      setEditingPrompt("");
+      await runSessionSlashCommand(sessionCommand);
       return;
     }
     if (!resolved.skill && !resolved.message.trim()) {
@@ -2250,9 +2473,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               color: isError ? theme.errorText : theme.mutedText,
             }}
           >
-            {customSkills.length
-              ? status
-              : text.defaultStatus}
+            {status || text.defaultStatus}
           </div>
           <button
             style={{
@@ -2296,6 +2517,16 @@ function formatSlashCommandStatus(skill: WebAISkill, text: WebAIStrings): string
   if (skill.kind === "new") {
     return text.status.slashNew;
   }
+  if (skill.kind === "clear") {
+    return getSessionSlashCommand(skill)?.scope === "all"
+      ? text.status.slashClearAll
+      : text.status.slashClear;
+  }
+  if (skill.kind === "export") {
+    return getSessionSlashCommand(skill)?.scope === "all"
+      ? text.status.slashExportAll
+      : text.status.slashExport;
+  }
   if (skill.kind === "pdf") {
     return text.status.slashPDF;
   }
@@ -2306,6 +2537,22 @@ function formatSlashCommandStatus(skill: WebAISkill, text: WebAIStrings): string
     return text.status.slashMCP;
   }
   return text.status.slashSkill(skill.slashCommand);
+}
+
+function getSessionSlashCommand(
+  skill: WebAISkill | null,
+): SessionSlashCommand | null {
+  if (!skill || (skill.kind !== "clear" && skill.kind !== "export")) {
+    return null;
+  }
+  return {
+    action: skill.kind,
+    scope:
+      skill.id.endsWith("-all") ||
+      normalizeSlashCommand(skill.slashCommand).toLowerCase().endsWith("all")
+        ? "all"
+        : "current",
+  };
 }
 
 function buildRecordUserPrompt(
@@ -3132,11 +3379,17 @@ function readLatestAssistantTextFromDocument(doc: Document): string {
 
   const getElementText = (element: Element) => {
     const textSource = element.cloneNode(true) as Element;
+    markDeepSeekThinkingElements(textSource);
     textSource
       .querySelectorAll(
         "button,svg,nav,header,footer,textarea,input,select,option,[role='button'],[role='toolbar'],[aria-hidden='true'],[hidden]",
       )
-      .forEach((node: Element) => node.remove());
+      .forEach((node: Element) => {
+        if (node.closest("[data-zotero-webai-thinking='true']")) {
+          return;
+        }
+        node.remove();
+      });
     const structured = elementHasMarkdownStructure(textSource);
     const raw = structured
       ? serializeElementToMarkdown(textSource)
@@ -3453,6 +3706,7 @@ function readLatestAssistantPlainTextFromDocument(doc: Document): string {
 
 function elementHasMarkdownStructure(element: Element): boolean {
   return Boolean(
+    element.querySelector("[data-zotero-webai-thinking='true']") ||
     element.querySelector(
       "h1,h2,h3,h4,h5,h6,p,ul,ol,li,table,thead,tbody,tr,th,td,blockquote,pre,code,strong,b,em,i,a",
     ),
@@ -3466,6 +3720,256 @@ function serializeElementToMarkdown(element: Element): string {
   return cleanupSerializedMarkdown(chunks.join("\n\n"));
 }
 
+function markDeepSeekThinkingElements(root: Element): void {
+  if (!isDeepSeekDocument(root)) {
+    return;
+  }
+  const candidates = Array.from(
+    new Set(
+      [
+        ...getDeepSeekExplicitThinkingElements(root),
+        ...(([root, ...Array.from(root.querySelectorAll("*"))] as Element[])
+          .map(resolveDeepSeekThinkingElement)
+          .filter(Boolean) as Element[]),
+      ],
+    ),
+  )
+    .sort(
+      (left, right) =>
+        Number(isDeepSeekExplicitThinkingElement(right)) -
+          Number(isDeepSeekExplicitThinkingElement(left)) ||
+        getElementTextLength(right) - getElementTextLength(left),
+    );
+  candidates.forEach((element) => {
+    if (element.closest("[data-zotero-webai-thinking='true']")) {
+      return;
+    }
+    if (hasMarkedThinkingDescendant(element)) {
+      return;
+    }
+    element.setAttribute("data-zotero-webai-thinking", "true");
+  });
+}
+
+function isDeepSeekDocument(root: Element): boolean {
+  try {
+    const host = root.ownerDocument?.location?.hostname || "";
+    return /(^|\.)deepseek\.com$/i.test(host);
+  } catch {
+    return false;
+  }
+}
+
+function resolveDeepSeekThinkingElement(element: Element): Element | null {
+  const descriptor = getDeepSeekElementDescriptor(element);
+  const label = getDeepSeekElementOwnLabel(element);
+  const descriptorLooksLikeThinking = isDeepSeekThinkingDescriptor(descriptor);
+  const labelLooksLikeThinking = isDeepSeekThinkingLabel(label);
+  if (!descriptorLooksLikeThinking && !labelLooksLikeThinking) {
+    return null;
+  }
+  if (
+    descriptorLooksLikeThinking &&
+    isDeepSeekThinkingWrapper(element, label)
+  ) {
+    return element;
+  }
+  if (
+    labelLooksLikeThinking &&
+    isDeepSeekExplicitThinkingElement(element) &&
+    isDeepSeekThinkingWrapper(element, label)
+  ) {
+    return element;
+  }
+
+  let current = element.parentElement;
+  let depth = 0;
+  while (current && depth < 5) {
+    depth += 1;
+    const currentDescriptor = getDeepSeekElementDescriptor(current);
+    if (
+      isDeepSeekAnswerDescriptor(currentDescriptor) &&
+      !isDeepSeekThinkingDescriptor(currentDescriptor)
+    ) {
+      return null;
+    }
+    if (
+      isDeepSeekThinkingDescriptor(currentDescriptor) &&
+      isDeepSeekThinkingWrapper(current, label)
+    ) {
+      return current;
+    }
+    if (
+      labelLooksLikeThinking &&
+      isDeepSeekExplicitThinkingElement(current) &&
+      isDeepSeekThinkingWrapper(current, label)
+    ) {
+      return current;
+    }
+    current = current.parentElement;
+  }
+  return null;
+}
+
+function getDeepSeekExplicitThinkingElements(root: Element): Element[] {
+  const selectors = [
+    ".ds-think-content",
+    "[class*='ds-think-content']",
+    "[class*='ds-markdown--think']",
+    "[class*='think-content']",
+    "[class*='thinking-content']",
+    "[class*='reasoning-content']",
+    "[data-testid*='think']",
+    "[data-testid*='reason']",
+    "[data-test*='think']",
+    "[data-test*='reason']",
+  ];
+  return Array.from(
+    new Set(
+      selectors.flatMap((selector) => {
+        try {
+          return Array.from(root.querySelectorAll(selector)) as Element[];
+        } catch {
+          return [];
+        }
+      }),
+    ),
+  ).filter((element) => isDeepSeekThinkingWrapper(element));
+}
+
+function isDeepSeekExplicitThinkingElement(element: Element): boolean {
+  try {
+    return element.matches(
+      ".ds-think-content,[class*='ds-think-content'],[class*='ds-markdown--think'],[class*='think-content'],[class*='thinking-content'],[class*='reasoning-content'],[data-testid*='think'],[data-testid*='reason'],[data-test*='think'],[data-test*='reason']",
+    );
+  } catch {
+    return false;
+  }
+}
+
+function isDeepSeekThinkingLabel(value: string): boolean {
+  return (
+    /^(?:reasoned|thought|thinking)\s+for\s+.+$/i.test(value) ||
+    /^(?:thinking|reasoning|reasoning process|chain of thought)$/i.test(value) ||
+    /^(?:\u5df2)?\u6df1\u5ea6\u601d\u8003(?:\s*(?:中|完成|[\d.]+\s*(?:秒|秒钟|s|sec|seconds?)|[（(].*[）)]))?$/i.test(
+      value,
+    ) ||
+    /^(?:\u601d\u8003\u4e2d|\u601d\u8003\u5b8c\u6210|\u601d\u8003\u8fc7\u7a0b|\u601d\u8003\u94fe|\u63a8\u7406\u8fc7\u7a0b|\u63a8\u7406)$/i.test(
+      value,
+    )
+  );
+}
+
+function isDeepSeekThinkingDescriptor(value: string): boolean {
+  if (/(?:enable|enabled|button|btn|switch|toggle|control|toolbar|header|icon)/i.test(value)) {
+    return false;
+  }
+  return /(?:^|[\s_-])(?:ds[\s_-]*)?(?:deep[\s_-]*think|deepthink|think|thinking|reasoning|reasoner|cot|chain[\s_-]*of[\s_-]*thought)(?:[\s_-]*(?:content|container|wrapper|block|panel|markdown|body|text|process|chain)|$)/i.test(
+    value,
+  );
+}
+
+function isDeepSeekAnswerDescriptor(value: string): boolean {
+  return /(?:markdown|prose|answer|response|assistant-message|message-content|ds-markdown)/i.test(
+    value,
+  ) && !/(?:think|reason|cot|chain)/i.test(value);
+}
+
+function hasDeepSeekThinkingContent(element: Element, label = ""): boolean {
+  const textLength = getElementTextLength(element);
+  const labelLength = normalizeCapturedText(label).length;
+  return (
+    textLength >= Math.max(24, labelLength + 24) &&
+    textLength <= 16000
+  );
+}
+
+function isDeepSeekThinkingWrapper(element: Element, label = ""): boolean {
+  const descriptor = getDeepSeekElementDescriptor(element);
+  if (
+    isDeepSeekAnswerDescriptor(descriptor) &&
+    !isDeepSeekThinkingDescriptor(descriptor)
+  ) {
+    return false;
+  }
+  if (
+    /user|human|prompt|question|composer|input|textarea|toolbar|sidebar|nav|menu|footer|header/.test(
+      descriptor,
+    )
+  ) {
+    return false;
+  }
+  if (
+    element.querySelector(
+      "textarea,input,select,option,form,[role='textbox'],[contenteditable='true']",
+    )
+  ) {
+    return false;
+  }
+  return hasDeepSeekThinkingContent(element, label);
+}
+
+function getDeepSeekElementDescriptor(element: Element): string {
+  return [
+    element.tagName,
+    element.id,
+    element.className,
+    element.getAttribute("role"),
+    element.getAttribute("data-testid"),
+    element.getAttribute("data-test"),
+    element.getAttribute("data-role"),
+    element.getAttribute("aria-label"),
+    element.getAttribute("title"),
+  ]
+    .join(" ")
+    .toLowerCase();
+}
+
+function getDeepSeekElementOwnLabel(element: Element): string {
+  const parts = [
+    element.getAttribute("aria-label") || "",
+    element.getAttribute("title") || "",
+  ];
+  getElementChildNodes(element).forEach((node) => {
+    if (node.nodeType === Node.TEXT_NODE) {
+      parts.push(node.textContent || "");
+      return;
+    }
+    if (node.nodeType !== Node.ELEMENT_NODE) {
+      return;
+    }
+    const child = node as Element;
+    if (/^(span|summary|label|button)$/i.test(child.tagName)) {
+      parts.push(child.textContent || "");
+    }
+  });
+  return normalizeInlineMarkdownText(parts.join(" "));
+}
+
+function getElementTextLength(element: Element): number {
+  return normalizeCapturedText(element.textContent || "").length;
+}
+
+function hasMarkedThinkingDescendant(element: Element): boolean {
+  return Boolean(
+    element.querySelector("[data-zotero-webai-thinking='true']"),
+  );
+}
+
+function serializeDeepSeekThinkingElement(
+  element: Element,
+  listDepth: number,
+): string {
+  const elementClone = element.cloneNode(true) as Element;
+  elementClone.removeAttribute("data-zotero-webai-thinking");
+  const markdown =
+    serializeContainerMarkdown(elementClone, listDepth) ||
+    serializeInlineMarkdown(elementClone).trim() ||
+    normalizeCapturedText(elementClone.textContent || "");
+  const text = cleanupSerializedMarkdown(markdown);
+  return text ? `<think>\n${text}\n</think>` : "";
+}
+
 function serializeMarkdownNode(node: Node, listDepth: number): string {
   if (node.nodeType === Node.TEXT_NODE) {
     return normalizeInlineMarkdownText(node.textContent || "");
@@ -3476,10 +3980,14 @@ function serializeMarkdownNode(node: Node, listDepth: number): string {
 
   const element = node as Element;
   const tag = element.tagName.toLowerCase();
+  if (element.getAttribute("data-zotero-webai-thinking") === "true") {
+    return serializeDeepSeekThinkingElement(element, listDepth);
+  }
   if (
     element.matches(
       "button,svg,nav,header,footer,textarea,input,select,option,[role='button'],[role='toolbar'],[aria-hidden='true'],[hidden]",
-    )
+    ) &&
+    !element.closest("[data-zotero-webai-thinking='true']")
   ) {
     return "";
   }
@@ -3557,6 +4065,9 @@ function serializeContainerMarkdown(element: Element, listDepth: number): string
 function isMarkdownBlockNode(node: Node): boolean {
   if (node.nodeType !== Node.ELEMENT_NODE) {
     return false;
+  }
+  if ((node as Element).getAttribute("data-zotero-webai-thinking") === "true") {
+    return true;
   }
   const tag = (node as Element).tagName.toLowerCase();
   return /^(h[1-6]|p|ul|ol|li|table|blockquote|pre|section|article)$/.test(tag);
@@ -3678,10 +4189,14 @@ function serializeInlineMarkdownNode(node: Node): string {
 
   const element = node as Element;
   const tag = element.tagName.toLowerCase();
+  if (element.getAttribute("data-zotero-webai-thinking") === "true") {
+    return `\n${serializeDeepSeekThinkingElement(element, 0)}\n`;
+  }
   if (
     element.matches(
       "button,svg,nav,header,footer,textarea,input,select,option,[role='button'],[role='toolbar'],[aria-hidden='true'],[hidden]",
-    )
+    ) &&
+    !element.closest("[data-zotero-webai-thinking='true']")
   ) {
     return "";
   }
@@ -4955,8 +5470,24 @@ ${insertPromptIntoDocument.toString()}`;
 function readLatestAssistantTextFromDocumentSource(): string {
   return `${readLatestAssistantPlainTextFromDocument.toString()}
 ${isAssistantDisclaimerLine.toString()}
+${normalizeCapturedText.toString()}
 ${elementHasMarkdownStructure.toString()}
 ${serializeElementToMarkdown.toString()}
+${markDeepSeekThinkingElements.toString()}
+${isDeepSeekDocument.toString()}
+${resolveDeepSeekThinkingElement.toString()}
+${getDeepSeekExplicitThinkingElements.toString()}
+${isDeepSeekExplicitThinkingElement.toString()}
+${isDeepSeekThinkingLabel.toString()}
+${isDeepSeekThinkingDescriptor.toString()}
+${isDeepSeekAnswerDescriptor.toString()}
+${hasDeepSeekThinkingContent.toString()}
+${isDeepSeekThinkingWrapper.toString()}
+${getDeepSeekElementDescriptor.toString()}
+${getDeepSeekElementOwnLabel.toString()}
+${getElementTextLength.toString()}
+${hasMarkedThinkingDescendant.toString()}
+${serializeDeepSeekThinkingElement.toString()}
 ${serializeMarkdownNode.toString()}
 ${serializeContainerMarkdown.toString()}
 ${isMarkdownBlockNode.toString()}
@@ -5718,6 +6249,184 @@ function updateChatSessionsRecords(
     updatedAt: normalizedRecords[0]?.createdAt || now,
   };
   return [updated, ...sessions.filter((session) => session.id !== sessionID)];
+}
+
+function getCurrentExportSession({
+  activeSessionID,
+  executionRecords,
+  serviceID,
+  serviceLabel,
+}: {
+  activeSessionID: string | null;
+  executionRecords: WebAIExecutionRecord[];
+  serviceID: WebAIServiceId;
+  serviceLabel: string;
+}): WebAIChatSession | null {
+  const records = clampSessionRecords(executionRecords);
+  if (!records.length && !activeSessionID) {
+    return null;
+  }
+  const session = createChatSession({
+    records,
+    serviceID,
+    serviceLabel,
+  });
+  return activeSessionID ? { ...session, id: activeSessionID } : session;
+}
+
+function buildSessionsExportMarkdown(sessions: WebAIChatSession[]): string {
+  const exportTime = new Date().toISOString();
+  const orderedSessions = [...sessions].sort(
+    (left, right) =>
+      Date.parse(left.createdAt || "") - Date.parse(right.createdAt || ""),
+  );
+  return [
+    "# Zotero WebAI Conversation Export",
+    "",
+    `Exported: ${exportTime}`,
+    `Sessions: ${orderedSessions.length}`,
+    "",
+    ...orderedSessions.map(formatSessionExportMarkdown),
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
+function formatSessionExportMarkdown(session: WebAIChatSession): string {
+  const records = [...session.records]
+    .filter((record) => record.body.trim() || formatRecordSourceForChat(record))
+    .reverse();
+  return [
+    `## ${escapeMarkdownHeadingText(session.title || session.serviceLabel)}`,
+    "",
+    `- Service: ${session.serviceLabel}`,
+    `- Created: ${formatRecordTimestamp(session.createdAt)}`,
+    `- Updated: ${formatRecordTimestamp(session.updatedAt)}`,
+    "",
+    ...records.map(formatRecordExportMarkdown),
+  ]
+    .filter((part) => part !== "")
+    .join("\n");
+}
+
+function formatRecordExportMarkdown(record: WebAIExecutionRecord): string {
+  const prompt = formatRecordSourceForChat(record);
+  const body = formatMarkdownForDisplay(record.body);
+  const parts = [
+    `### ${escapeMarkdownHeadingText(record.title)}`,
+    "",
+    `- Type: ${getRecordKindLabel(record.kind)}`,
+    record.subtitle ? `- Context: ${record.subtitle}` : "",
+    `- Status: ${record.status}`,
+    `- Time: ${formatRecordTimestamp(record.createdAt)}`,
+    record.hidden ? "- Visibility: internal context" : "",
+    "",
+    prompt ? `**User**\n\n${prompt}` : "",
+    body ? `**Result**\n\n${body}` : "",
+    record.thinking
+      ? [
+          "<details>",
+          "<summary>Process / Thinking</summary>",
+          "",
+          formatMarkdownForDisplay(record.thinking),
+          "",
+          "</details>",
+        ].join("\n")
+      : "",
+    "",
+  ];
+  return parts.filter((part) => part !== "").join("\n");
+}
+
+function escapeMarkdownHeadingText(value: string): string {
+  return normalizeWhitespace(value || "Untitled")
+    .replace(/^#+\s*/, "")
+    .replace(/\s+#*$/, "")
+    .trim() || "Untitled";
+}
+
+function buildConversationExportFileName(scope: SessionSlashScope): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const rawName = `Zotero-WebAI-${scope}-${stamp}.md`;
+  try {
+    return Zotero.File.getValidFileName(rawName);
+  } catch {
+    return rawName.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-");
+  }
+}
+
+async function exportMarkdownWithPicker({
+  hostWindow,
+  markdown,
+  suggestedName,
+}: {
+  hostWindow: Window;
+  markdown: string;
+  suggestedName: string;
+}): Promise<MarkdownExportResult> {
+  try {
+    const target = await chooseMarkdownExportFile(hostWindow, suggestedName);
+    if (!target) {
+      return { status: "cancelled" };
+    }
+    await Zotero.File.putContentsAsync(target, markdown, "utf-8");
+    return {
+      status: "saved",
+      target: getFileDisplayPath(target) || suggestedName,
+    };
+  } catch (error) {
+    ztoolkit.log("Zotero WebAI Markdown export fell back to clipboard:", error);
+    copyTextToClipboard(markdown);
+    return { status: "copied" };
+  }
+}
+
+function chooseMarkdownExportFile(
+  hostWindow: Window,
+  suggestedName: string,
+): Promise<nsIFile | null> {
+  const browsingContext = (hostWindow as Window & {
+    browsingContext?: BrowsingContext;
+  }).browsingContext;
+  if (!browsingContext) {
+    throw new Error("No browsing context is available for file export");
+  }
+  const componentClasses = Components.classes as Record<
+    string,
+    { createInstance: (interfaceType: unknown) => nsIFilePicker }
+  >;
+  const picker = componentClasses[
+    "@mozilla.org/filepicker;1"
+  ].createInstance(Components.interfaces.nsIFilePicker);
+  const modeSave = (picker.modeSave ?? 1) as nsIFilePicker.Mode;
+  const returnOK = (picker.returnOK ?? 0) as nsIFilePicker.ResultCode;
+  const returnReplace = (picker.returnReplace ?? 2) as nsIFilePicker.ResultCode;
+  picker.init(
+    browsingContext,
+    "Export Zotero WebAI conversation",
+    modeSave,
+  );
+  picker.defaultString = suggestedName;
+  picker.defaultExtension = "md";
+  picker.appendFilter("Markdown", "*.md");
+  if (picker.filterAll) {
+    picker.appendFilters(picker.filterAll);
+  }
+  return new Promise((resolve) => {
+    picker.open({
+      done(result) {
+        if (result === returnOK || result === returnReplace) {
+          resolve(picker.file);
+          return;
+        }
+        resolve(null);
+      },
+    });
+  });
+}
+
+function getFileDisplayPath(file: nsIFile): string {
+  return (file as nsIFile & { path?: string }).path || file.leafName || "";
 }
 
 function clampChatSessions(sessions: WebAIChatSession[]): WebAIChatSession[] {
@@ -7501,11 +8210,15 @@ async function waitForStableAssistantText(
   let bestCandidate = "";
   let stableReads = 0;
 
-  for (let attempt = 0; attempt < 55; attempt += 1) {
+  for (let attempt = 0; attempt < ASSISTANT_CAPTURE_MAX_ATTEMPTS; attempt += 1) {
     if (!shouldContinue()) {
       return "";
     }
-    await sleepWithHostTimer(attempt < 2 ? 1000 : 1500);
+    await sleepWithHostTimer(
+      attempt < 2
+        ? ASSISTANT_CAPTURE_INITIAL_POLL_MS
+        : ASSISTANT_CAPTURE_POLL_MS,
+    );
     const result = await readLatestAssistantText(frame);
     if (!result.ok || !result.text) {
       continue;
@@ -7530,7 +8243,7 @@ async function waitForStableAssistantText(
       stableReads = 0;
       onCandidate?.(candidate);
     }
-    if (stableReads >= 2) {
+    if (stableReads >= ASSISTANT_CAPTURE_STABLE_READS) {
       return bestCandidate;
     }
   }
