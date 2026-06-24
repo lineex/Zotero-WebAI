@@ -1,6 +1,6 @@
 # Zotero WebAI
 
-[English README](README.md)
+[English](README.md)
 
 Zotero WebAI 是一个面向 Zotero 9 的阅读侧边栏插件，可以在当前文献、PDF 阅读器旁边内嵌 DeepSeek Web、Z.ai Web 和 ChatGPT Web。插件不需要模型 API Key，用户直接在内嵌网页中登录，并通过 Zotero 侧边栏把文献上下文、输入框 slash 命令、自定义 Skill 和 MCP 工具真实结果送入网页对话。
 
