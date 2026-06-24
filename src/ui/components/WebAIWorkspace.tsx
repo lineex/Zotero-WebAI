@@ -776,6 +776,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   settings,
 }) => {
   const isReaderWorkspace = location === "reader";
+  const workspaceLayout = settings.workspaceLayout || "stacked";
+  const isCompactLayout = workspaceLayout === "compact";
   const language = useMemo(() => resolveWebAILocale(hostWindow), [hostWindow]);
   const text = useMemo(() => getWebAIStrings(language), [language]);
   const [service, setService] = useState<WebAIService>(SERVICES[0]);
@@ -794,6 +796,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [chatCollapsed, setChatCollapsed] = useState(false);
   const [webSearchEnabled, setWebSearchEnabled] = useState(false);
   const [zaiLoginMode, setZaiLoginMode] = useState(false);
+  const isSplitLayout = workspaceLayout === "split" && !zaiLoginMode;
   const [chatSessions, setChatSessions] = useState<WebAIChatSession[]>(() =>
     INITIAL_CHAT_SESSIONS,
   );
@@ -2115,6 +2118,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     <section
       style={{
         ...styles.container,
+        ...(isSplitLayout ? styles.splitContainer : {}),
+        ...(isCompactLayout ? styles.compactContainer : {}),
         background: theme.background,
         color: theme.text,
       }}
@@ -2123,7 +2128,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         ref={frameHostRef}
         style={{
           ...styles.frameHost,
+          ...(isSplitLayout ? styles.splitFrameHost : {}),
           ...(isReaderWorkspace ? styles.readerFrameHost : {}),
+          ...(isCompactLayout ? styles.compactFrameHost : {}),
           ...(isZAILoginMode ? styles.loginFrameHost : {}),
           ...(chatCollapsed ? styles.frameHostCollapsed : {}),
           background: theme.surfaceBackground,
@@ -2224,6 +2231,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       <div
         style={{
           ...styles.frameToolbar,
+          ...(isSplitLayout ? styles.splitToolbar : {}),
           background: theme.surfaceBackground,
           borderColor: theme.softBorder,
         }}
@@ -2381,7 +2389,9 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         <div
           style={{
             ...styles.executionPanel,
+            ...(isSplitLayout ? styles.splitExecutionPanel : {}),
             ...(isReaderWorkspace ? styles.readerExecutionPanel : {}),
+            ...(isCompactLayout ? styles.compactExecutionPanel : {}),
             background: theme.surfaceBackground,
             borderColor: theme.softBorder,
           }}
@@ -2498,6 +2508,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         <div
           style={{
             ...styles.composerPanel,
+            ...(isSplitLayout ? styles.splitComposerPanel : {}),
+            ...(isCompactLayout ? styles.compactComposerPanel : {}),
             background: theme.surfaceBackground,
             borderColor: theme.softBorder,
           }}
@@ -8899,6 +8911,17 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "8px",
     width: "100%",
   },
+  compactContainer: {
+    gap: "7px",
+    padding: "6px",
+  },
+  splitContainer: {
+    display: "grid",
+    gap: "8px",
+    gridTemplateAreas: '"toolbar toolbar" "web chat" "composer composer"',
+    gridTemplateColumns: "minmax(260px, 0.95fr) minmax(300px, 1.05fr)",
+    gridTemplateRows: "auto minmax(0, 1fr) auto",
+  },
   frameHost: {
     border: "1px solid #e0e0e0",
     borderRadius: "8px",
@@ -8919,6 +8942,17 @@ const styles: Record<string, React.CSSProperties> = {
     maxHeight: "70vh",
     minHeight: "180px",
     resize: "vertical",
+  },
+  compactFrameHost: {
+    minHeight: "160px",
+    height: "180px",
+    maxHeight: "46vh",
+  },
+  splitFrameHost: {
+    gridArea: "web",
+    height: "100%",
+    maxHeight: "none",
+    minHeight: "280px",
   },
   frameHostCollapsed: {
     display: "none",
@@ -8974,6 +9008,9 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     padding: "8px",
   },
+  splitToolbar: {
+    gridArea: "toolbar",
+  },
   serviceBar: {
     display: "flex",
     flex: "1 1 180px",
@@ -9027,6 +9064,16 @@ const styles: Record<string, React.CSSProperties> = {
     padding: 0,
     resize: "vertical",
     width: "100%",
+  },
+  compactExecutionPanel: {
+    minHeight: "220px",
+    height: "340px",
+  },
+  splitExecutionPanel: {
+    gridArea: "chat",
+    height: "100%",
+    maxHeight: "none",
+    minHeight: "280px",
   },
   readerExecutionPanel: {
     flex: "1 1 auto",
@@ -9527,6 +9574,12 @@ const styles: Record<string, React.CSSProperties> = {
     position: "relative",
     resize: "vertical",
     width: "100%",
+  },
+  compactComposerPanel: {
+    minHeight: "122px",
+  },
+  splitComposerPanel: {
+    gridArea: "composer",
   },
   slashMenu: {
     border: "1px solid #e0e0e0",

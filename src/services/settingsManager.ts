@@ -8,17 +8,28 @@ export type EvidenceProviderMode =
   | typeof DEFAULT_EVIDENCE_PROVIDER_MODE
   | "mcp-web-search";
 type LegacyEvidenceProviderMode = "builtin-search";
+export type WorkspaceLayoutMode = "stacked" | "split" | "compact";
+export type IconPlacementMode = "both" | "reader-sidebar" | "reader-toolbar";
 
 export interface PersistedSettings {
+  configSyncEnabled: boolean;
+  configSyncEndpoint?: string;
+  configSyncPassword?: string;
+  configSyncRemotePath?: string;
+  configSyncSnapshot?: string;
+  configSyncUsername?: string;
   customPresets: string;
   evidenceEnabled: boolean;
   evidenceProviderMode: EvidenceProviderMode;
+  iconPlacement: IconPlacementMode;
+  itemPaneButtonEnabled: boolean;
   keyboardShortcut: string;
   maxContextBudget: number;
   mcpAuthToken?: string;
   mcpEndpoint?: string;
   mcpToolArgumentsTemplate?: string;
   mcpToolName?: string;
+  workspaceLayout: WorkspaceLayoutMode;
 }
 
 export type Settings = PersistedSettings;
@@ -26,17 +37,27 @@ export type Settings = PersistedSettings;
 export const DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE =
   '{"q":"{{query}}","limit":1000,"mode":"complete","relevanceScoring":true,"sort":"relevance"}';
 export const DEFAULT_MCP_ENDPOINT = "http://127.0.0.1:23120/mcp";
+export const DEFAULT_CONFIG_SYNC_REMOTE_PATH = "Zotero-WebAI-config.json";
 
 export const DEFAULT_SETTINGS: Settings = {
+  configSyncEnabled: false,
+  configSyncEndpoint: "",
+  configSyncPassword: "",
+  configSyncRemotePath: DEFAULT_CONFIG_SYNC_REMOTE_PATH,
+  configSyncSnapshot: "",
+  configSyncUsername: "",
   customPresets: "",
   evidenceEnabled: false,
   evidenceProviderMode: DEFAULT_EVIDENCE_PROVIDER_MODE,
+  iconPlacement: "both",
+  itemPaneButtonEnabled: true,
   keyboardShortcut: "I",
   maxContextBudget: 4000,
   mcpAuthToken: "",
   mcpEndpoint: DEFAULT_MCP_ENDPOINT,
   mcpToolArgumentsTemplate: DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
   mcpToolName: "search_library",
+  workspaceLayout: "stacked",
 };
 
 export const PREFERENCES_PANE_ID = `${config.addonRef}-prefpane`;
@@ -52,6 +73,20 @@ function normalizeEvidenceProviderMode(
 
 function normalizeBoolean(value: unknown): boolean {
   return value === true || value === "true" || value === 1 || value === "1";
+}
+
+function normalizeWorkspaceLayoutMode(value: unknown): WorkspaceLayoutMode {
+  return value === "split" || value === "compact" || value === "stacked"
+    ? value
+    : DEFAULT_SETTINGS.workspaceLayout;
+}
+
+function normalizeIconPlacementMode(value: unknown): IconPlacementMode {
+  return value === "reader-sidebar" ||
+    value === "reader-toolbar" ||
+    value === "both"
+    ? value
+    : DEFAULT_SETTINGS.iconPlacement;
 }
 
 export type CustomCommandPreset = Partial<CommandPreset> & {
@@ -337,11 +372,24 @@ export function mergeEditableCustomPresets(
 
 export function getSettings(): Settings {
   return {
+    configSyncEnabled: normalizeBoolean(getPref("configSyncEnabled")),
+    configSyncEndpoint: ((getPref("configSyncEndpoint") || "") as string).trim(),
+    configSyncPassword: (getPref("configSyncPassword") || "") as string,
+    configSyncRemotePath:
+      ((getPref("configSyncRemotePath") || "") as string).trim() ||
+      DEFAULT_CONFIG_SYNC_REMOTE_PATH,
+    configSyncSnapshot: (getPref("configSyncSnapshot") || "") as string,
+    configSyncUsername: (getPref("configSyncUsername") || "") as string,
     customPresets: normalizeCustomPresetsValue(getPref("customPresets")),
     evidenceEnabled: normalizeBoolean(getPref("evidenceEnabled")),
     evidenceProviderMode: normalizeEvidenceProviderMode(
       getPref("evidenceProviderMode") as string | undefined,
     ),
+    iconPlacement: normalizeIconPlacementMode(getPref("iconPlacement")),
+    itemPaneButtonEnabled:
+      getPref("itemPaneButtonEnabled") === undefined
+        ? DEFAULT_SETTINGS.itemPaneButtonEnabled
+        : normalizeBoolean(getPref("itemPaneButtonEnabled")),
     keyboardShortcut: (getPref("keyboardShortcut") ||
       DEFAULT_SETTINGS.keyboardShortcut) as string,
     maxContextBudget: Number(
@@ -357,10 +405,32 @@ export function getSettings(): Settings {
     mcpToolName:
       ((getPref("mcpToolName") || "") as string).trim() ||
       DEFAULT_SETTINGS.mcpToolName,
+    workspaceLayout: normalizeWorkspaceLayoutMode(getPref("workspaceLayout")),
   };
 }
 
 export function saveSettings(settings: Partial<PersistedSettings>): void {
+  if (settings.configSyncEnabled !== undefined) {
+    setPref("configSyncEnabled", settings.configSyncEnabled);
+  }
+  if (settings.configSyncEndpoint !== undefined) {
+    setPref("configSyncEndpoint", settings.configSyncEndpoint.trim());
+  }
+  if (settings.configSyncPassword !== undefined) {
+    setPref("configSyncPassword", settings.configSyncPassword);
+  }
+  if (settings.configSyncRemotePath !== undefined) {
+    setPref(
+      "configSyncRemotePath",
+      settings.configSyncRemotePath.trim() || DEFAULT_CONFIG_SYNC_REMOTE_PATH,
+    );
+  }
+  if (settings.configSyncSnapshot !== undefined) {
+    setPref("configSyncSnapshot", settings.configSyncSnapshot);
+  }
+  if (settings.configSyncUsername !== undefined) {
+    setPref("configSyncUsername", settings.configSyncUsername);
+  }
   if (settings.customPresets !== undefined) {
     setPref(
       "customPresets",
@@ -382,6 +452,12 @@ export function saveSettings(settings: Partial<PersistedSettings>): void {
       normalizeEvidenceProviderMode(settings.evidenceProviderMode),
     );
   }
+  if (settings.iconPlacement !== undefined) {
+    setPref("iconPlacement", normalizeIconPlacementMode(settings.iconPlacement));
+  }
+  if (settings.itemPaneButtonEnabled !== undefined) {
+    setPref("itemPaneButtonEnabled", settings.itemPaneButtonEnabled);
+  }
   if (settings.mcpAuthToken !== undefined) {
     setPref("mcpAuthToken", settings.mcpAuthToken);
   }
@@ -399,6 +475,12 @@ export function saveSettings(settings: Partial<PersistedSettings>): void {
     setPref(
       "mcpToolName",
       settings.mcpToolName.trim() || DEFAULT_SETTINGS.mcpToolName || "search_library",
+    );
+  }
+  if (settings.workspaceLayout !== undefined) {
+    setPref(
+      "workspaceLayout",
+      normalizeWorkspaceLayoutMode(settings.workspaceLayout),
     );
   }
 }

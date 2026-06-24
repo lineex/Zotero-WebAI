@@ -3,6 +3,8 @@ import { config } from "../../package.json";
 import { getReaderCurrentPage, getReaderSelectedText } from "./readerPrivate";
 import { createTraceId, debugLog } from "../utils/debugLog";
 import { UIFactory } from "../ui/ui";
+import { getSettings } from "../services/settingsManager";
+import { syncActiveReaderWebAIPanel } from "./readerWebAIPanel";
 
 type ReaderSelectionPopupEvent = Parameters<
   typeof Zotero.Reader.registerEventListener<"renderTextSelectionPopup">
@@ -307,6 +309,7 @@ function onRenderToolbar(event: ReaderToolbarEvent): void {
   }
 
   void reader;
+  syncActiveReaderWebAIPanel();
   ensureReaderToolbarButton(doc, append);
 }
 
@@ -316,6 +319,11 @@ function ensureReaderToolbarButton(
 ): void {
   const mainWindow = Zotero.getMainWindow?.();
   const existing = doc.getElementById(TOOLBAR_BUTTON_ID) as HTMLElement | null;
+  const iconPlacement = getSettings().iconPlacement;
+  if (iconPlacement === "reader-sidebar") {
+    existing?.remove();
+    return;
+  }
   if (existing) {
     moveToolbarButtonToMiddle(doc, existing);
     return;

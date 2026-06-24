@@ -194,7 +194,40 @@ export const Sidebar: React.FC<SidebarProps> = ({
           color: theme.text,
         }}
       >
-        <div style={styles.webWorkspacePane}>
+        <header
+          style={{
+            ...styles.shellHeader,
+            background: theme.surfaceBackground,
+            borderColor: theme.softBorder,
+          }}
+        >
+          <div style={styles.shellTitleBlock}>
+            <span style={{ ...styles.shellTitle, color: theme.text }}>
+              Zotero WebAI
+            </span>
+            <span style={{ ...styles.shellMeta, color: theme.mutedText }}>
+              {formatSidebarScope(location, scope)}
+            </span>
+          </div>
+          <span
+            style={{
+              ...styles.shellBadge,
+              background: theme.badgeBackground,
+              borderColor: theme.badgeBorder,
+              color: theme.badgeText,
+            }}
+          >
+            {formatLayoutBadge(settings.workspaceLayout)}
+          </span>
+        </header>
+        <div
+          style={{
+            ...styles.webWorkspacePane,
+            ...(settings.workspaceLayout === "compact"
+              ? styles.compactWorkspacePane
+              : {}),
+          }}
+        >
           <WebAIWorkspace
             contextSummary={contextSummary}
             customPresets={settings.customPresets}
@@ -253,6 +286,27 @@ class SidebarErrorBoundary extends React.Component<
   }
 }
 
+function formatSidebarScope(
+  location: "library" | "reader",
+  scope: ScopeContext | null,
+): string {
+  const surface = location === "reader" ? "Reader" : "Library";
+  if (!scope?.label) {
+    return surface;
+  }
+  return `${surface} - ${scope.label}`;
+}
+
+function formatLayoutBadge(layout: Settings["workspaceLayout"]): string {
+  if (layout === "split") {
+    return "Split";
+  }
+  if (layout === "compact") {
+    return "Compact";
+  }
+  return "Stacked";
+}
+
 async function summarizeScope(
   scope: ScopeContext | null,
 ): Promise<AssembledContext | null> {
@@ -290,6 +344,50 @@ const styles: Record<string, React.CSSProperties> = {
     minWidth: 0,
     overflow: "hidden",
     padding: 0,
+  },
+  compactWorkspacePane: {
+    fontSize: "0.96em",
+  },
+  shellHeader: {
+    alignItems: "center",
+    borderBottom: "1px solid #e0e0e0",
+    boxSizing: "border-box",
+    display: "flex",
+    flex: "0 0 auto",
+    gap: "8px",
+    justifyContent: "space-between",
+    minHeight: "44px",
+    minWidth: 0,
+    padding: "8px 10px",
+  },
+  shellTitleBlock: {
+    display: "flex",
+    flex: "1 1 auto",
+    flexDirection: "column",
+    gap: "2px",
+    minWidth: 0,
+  },
+  shellTitle: {
+    fontSize: typography.body,
+    fontWeight: 800,
+    lineHeight: 1.25,
+  },
+  shellMeta: {
+    fontSize: typography.caption,
+    lineHeight: 1.25,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  shellBadge: {
+    border: "1px solid #d6e5f4",
+    borderRadius: "999px",
+    flex: "0 0 auto",
+    fontSize: typography.caption,
+    fontWeight: 700,
+    lineHeight: 1.2,
+    padding: "3px 8px",
+    whiteSpace: "nowrap",
   },
   errorBoundary: {
     background: "#fbf1f1",

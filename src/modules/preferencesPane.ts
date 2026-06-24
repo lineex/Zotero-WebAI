@@ -1,4 +1,5 @@
 import {
+  DEFAULT_CONFIG_SYNC_REMOTE_PATH,
   DEFAULT_EVIDENCE_PROVIDER_MODE,
   DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
   DEFAULT_SETTINGS,
@@ -72,6 +73,9 @@ const EVIDENCE_PROVIDER_ID = "zotero-ai-assistant-pref-evidence-provider";
 const EVIDENCE_VALIDATE_BUTTON_ID =
   "zotero-ai-assistant-pref-evidence-validate";
 const EVIDENCE_STATUS_ID = "zotero-ai-assistant-pref-evidence-status";
+const WORKSPACE_LAYOUT_ID = "zotero-ai-assistant-pref-workspace-layout";
+const ICON_PLACEMENT_ID = "zotero-ai-assistant-pref-icon-placement";
+const ITEM_PANE_BUTTON_ID = "zotero-ai-assistant-pref-item-pane-button";
 const MCP_SETTINGS_ID = "zotero-ai-assistant-pref-mcp-settings";
 const MCP_ENDPOINT_ID = "zotero-ai-assistant-pref-mcp-endpoint";
 const MCP_AUTH_TOKEN_ID = "zotero-ai-assistant-pref-mcp-auth-token";
@@ -79,6 +83,21 @@ const CUSTOM_PRESETS_ID = "zotero-ai-assistant-pref-custom-presets";
 const SLASH_CUSTOM_ID = "zotero-ai-assistant-pref-slash-custom";
 const SLASH_ADD_ID = "zotero-ai-assistant-pref-slash-add";
 const SLASH_LIMIT_STATUS_ID = "zotero-ai-assistant-pref-slash-limit-status";
+const BACKUP_TEXT_ID = "zotero-ai-assistant-pref-backup-json";
+const BACKUP_GENERATE_ID = "zotero-ai-assistant-pref-backup-generate";
+const BACKUP_COPY_ID = "zotero-ai-assistant-pref-backup-copy";
+const BACKUP_EXPORT_ID = "zotero-ai-assistant-pref-backup-export";
+const BACKUP_IMPORT_ID = "zotero-ai-assistant-pref-backup-import";
+const BACKUP_STATUS_ID = "zotero-ai-assistant-pref-backup-status";
+const SYNC_ENABLED_ID = "zotero-ai-assistant-pref-sync-enabled";
+const SYNC_ENDPOINT_ID = "zotero-ai-assistant-pref-sync-endpoint";
+const SYNC_REMOTE_PATH_ID = "zotero-ai-assistant-pref-sync-remote-path";
+const SYNC_USERNAME_ID = "zotero-ai-assistant-pref-sync-username";
+const SYNC_PASSWORD_ID = "zotero-ai-assistant-pref-sync-password";
+const SYNC_TEST_ID = "zotero-ai-assistant-pref-sync-test";
+const SYNC_PUSH_ID = "zotero-ai-assistant-pref-sync-push";
+const SYNC_PULL_ID = "zotero-ai-assistant-pref-sync-pull";
+const SYNC_STATUS_ID = "zotero-ai-assistant-pref-sync-status";
 
 const MAX_CUSTOM_SLASH_COMMANDS = 1000;
 const BUTTON_ACTIVATION_DEDUPE_WINDOW_MS = 300;
@@ -439,6 +458,162 @@ export function registerPreferencesPane(
     }
   };
 
+  const generateBackup = () => {
+    const backupText = buildSettingsBackupJSON(readFormValues(doc));
+    const field = getField(doc, BACKUP_TEXT_ID);
+    if (field) {
+      field.value = backupText;
+    }
+    setStatusText(
+      getBackupStatusElement(doc),
+      "Configuration backup JSON generated.",
+      "success",
+    );
+  };
+
+  const copyBackup = () => {
+    const field = getField(doc, BACKUP_TEXT_ID);
+    const value = field?.value?.trim() || buildSettingsBackupJSON(readFormValues(doc));
+    if (field) {
+      field.value = value;
+    }
+    copyTextToClipboard(value);
+    setStatusText(
+      getBackupStatusElement(doc),
+      "Configuration backup JSON copied.",
+      "success",
+    );
+  };
+
+  const exportBackup = async () => {
+    const field = getField(doc, BACKUP_TEXT_ID);
+    const value = field?.value?.trim() || buildSettingsBackupJSON(readFormValues(doc));
+    if (field) {
+      field.value = value;
+    }
+    const target = buildBackupExportPath();
+    if (!target) {
+      setStatusText(
+        getBackupStatusElement(doc),
+        "Could not determine a backup export path.",
+        "error",
+      );
+      return;
+    }
+    try {
+      await writeLocalTextFile(target, value);
+      setStatusText(
+        getBackupStatusElement(doc),
+        `Configuration backup exported to ${target}`,
+        "success",
+      );
+    } catch (error) {
+      setStatusText(
+        getBackupStatusElement(doc),
+        `Backup export failed: ${formatErrorMessage(error)}`,
+        "error",
+      );
+    }
+  };
+
+  const importBackup = () => {
+    const field = getField(doc, BACKUP_TEXT_ID);
+    const value = field?.value?.trim() || "";
+    const result = parseSettingsBackupJSON(value);
+    if (!result.ok) {
+      setStatusText(
+        getBackupStatusElement(doc),
+        result.error || "Invalid backup JSON.",
+        "error",
+      );
+      return;
+    }
+
+    deps.saveSettings(result.settings);
+    slashState = createSlashSettingsState(result.settings.customPresets || "");
+    hydrateForm(doc, deps.getSettings(), slashState);
+    rerenderSlash();
+    EventBus.getInstance().dispatchEvent(
+      createHostEvent("settingsChange", win),
+    );
+    setStatusText(
+      getBackupStatusElement(doc),
+      "Configuration backup imported.",
+      "success",
+    );
+  };
+
+  const saveSyncSettings = () => {
+    deps.saveSettings(readFormValues(doc));
+    EventBus.getInstance().dispatchEvent(
+      createHostEvent("settingsChange", win),
+    );
+  };
+
+  const testSync = async () => {
+    saveSyncSettings();
+    setStatusText(getSyncStatusElement(doc), "Testing sync endpoint...", "success");
+    const result = await testConfigSync(readFormValues(doc), doc);
+    setStatusText(
+      getSyncStatusElement(doc),
+      result.message,
+      result.ok ? "success" : "error",
+    );
+  };
+
+  const pushSync = async () => {
+    saveSyncSettings();
+    const backup = buildSettingsBackupJSON(readFormValues(doc));
+    setStatusText(getSyncStatusElement(doc), "Uploading configuration...", "success");
+    const result = await pushConfigSync(readFormValues(doc), backup, doc);
+    if (result.ok) {
+      deps.saveSettings({ configSyncSnapshot: backup });
+    }
+    setStatusText(
+      getSyncStatusElement(doc),
+      result.message,
+      result.ok ? "success" : "error",
+    );
+  };
+
+  const pullSync = async () => {
+    saveSyncSettings();
+    setStatusText(getSyncStatusElement(doc), "Downloading configuration...", "success");
+    const result = await pullConfigSync(readFormValues(doc), doc);
+    if (!result.ok || !result.backupText) {
+      setStatusText(
+        getSyncStatusElement(doc),
+        result.message,
+        "error",
+      );
+      return;
+    }
+    const parsed = parseSettingsBackupJSON(result.backupText);
+    if (!parsed.ok) {
+      setStatusText(
+        getSyncStatusElement(doc),
+        parsed.error || "Downloaded backup JSON is invalid.",
+        "error",
+      );
+      return;
+    }
+    deps.saveSettings({
+      ...parsed.settings,
+      configSyncSnapshot: result.backupText,
+    });
+    slashState = createSlashSettingsState(parsed.settings.customPresets || "");
+    hydrateForm(doc, deps.getSettings(), slashState);
+    rerenderSlash();
+    EventBus.getInstance().dispatchEvent(
+      createHostEvent("settingsChange", win),
+    );
+    setStatusText(
+      getSyncStatusElement(doc),
+      "Configuration downloaded and applied.",
+      "success",
+    );
+  };
+
   const rerenderSlash = () => {
     renderSlashSettings(doc, slashState);
     syncSlashStorageField(doc, slashState);
@@ -469,8 +644,26 @@ export function registerPreferencesPane(
     ["change", "command"],
     () => persist(),
   );
+  bindTriggeredFieldEvents(
+    doc,
+    WORKSPACE_LAYOUT_ID,
+    ["change", "command"],
+    () => persist(),
+  );
+  bindTriggeredFieldEvents(
+    doc,
+    ICON_PLACEMENT_ID,
+    ["change", "command"],
+    () => persist(),
+  );
+  bindFieldEvent(doc, ITEM_PANE_BUTTON_ID, "change", () => persist());
   bindFieldEvent(doc, MCP_ENDPOINT_ID, "change", () => persist());
   bindFieldEvent(doc, MCP_AUTH_TOKEN_ID, "change", () => persist());
+  bindFieldEvent(doc, SYNC_ENABLED_ID, "change", () => persist());
+  bindFieldEvent(doc, SYNC_ENDPOINT_ID, "change", () => persist());
+  bindFieldEvent(doc, SYNC_REMOTE_PATH_ID, "change", () => persist());
+  bindFieldEvent(doc, SYNC_USERNAME_ID, "change", () => persist());
+  bindFieldEvent(doc, SYNC_PASSWORD_ID, "change", () => persist());
   bindButtonActivation(doc, SLASH_ADD_ID, () => {
     const next = addCustomSlashCard(slashState);
     if (next === slashState) {
@@ -486,6 +679,21 @@ export function registerPreferencesPane(
   bindButtonActivation(doc, EVIDENCE_VALIDATE_BUTTON_ID, () => {
     void validateEvidence();
   });
+  bindButtonActivation(doc, BACKUP_GENERATE_ID, () => generateBackup());
+  bindButtonActivation(doc, BACKUP_COPY_ID, () => copyBackup());
+  bindButtonActivation(doc, BACKUP_EXPORT_ID, () => {
+    void exportBackup();
+  });
+  bindButtonActivation(doc, BACKUP_IMPORT_ID, () => importBackup());
+  bindButtonActivation(doc, SYNC_TEST_ID, () => {
+    void testSync();
+  });
+  bindButtonActivation(doc, SYNC_PUSH_ID, () => {
+    void pushSync();
+  });
+  bindButtonActivation(doc, SYNC_PULL_ID, () => {
+    void pullSync();
+  });
   rerenderSlash();
 }
 
@@ -496,8 +704,16 @@ function hydrateForm(
 ): void {
   const customPresetsField = getField(doc, CUSTOM_PRESETS_ID);
   const evidenceProviderField = getField(doc, EVIDENCE_PROVIDER_ID);
+  const iconPlacementField = getField(doc, ICON_PLACEMENT_ID);
+  const itemPaneButtonField = getField(doc, ITEM_PANE_BUTTON_ID);
   const mcpAuthTokenField = getField(doc, MCP_AUTH_TOKEN_ID);
   const mcpEndpointField = getField(doc, MCP_ENDPOINT_ID);
+  const syncEnabledField = getField(doc, SYNC_ENABLED_ID);
+  const syncEndpointField = getField(doc, SYNC_ENDPOINT_ID);
+  const syncPasswordField = getField(doc, SYNC_PASSWORD_ID);
+  const syncRemotePathField = getField(doc, SYNC_REMOTE_PATH_ID);
+  const syncUsernameField = getField(doc, SYNC_USERNAME_ID);
+  const workspaceLayoutField = getField(doc, WORKSPACE_LAYOUT_ID);
 
   if (customPresetsField) {
     customPresetsField.value = serializeSlashSettingsState(slashState);
@@ -505,11 +721,36 @@ function hydrateForm(
   if (evidenceProviderField) {
     evidenceProviderField.value = settings.evidenceProviderMode;
   }
+  if (workspaceLayoutField) {
+    workspaceLayoutField.value = settings.workspaceLayout;
+  }
+  if (iconPlacementField) {
+    iconPlacementField.value = settings.iconPlacement;
+  }
+  if (itemPaneButtonField) {
+    itemPaneButtonField.checked = settings.itemPaneButtonEnabled;
+  }
   if (mcpAuthTokenField) {
     mcpAuthTokenField.value = settings.mcpAuthToken || "";
   }
   if (mcpEndpointField) {
     mcpEndpointField.value = settings.mcpEndpoint || "";
+  }
+  if (syncEnabledField) {
+    syncEnabledField.checked = settings.configSyncEnabled;
+  }
+  if (syncEndpointField) {
+    syncEndpointField.value = settings.configSyncEndpoint || "";
+  }
+  if (syncRemotePathField) {
+    syncRemotePathField.value =
+      settings.configSyncRemotePath || DEFAULT_CONFIG_SYNC_REMOTE_PATH;
+  }
+  if (syncUsernameField) {
+    syncUsernameField.value = settings.configSyncUsername || "";
+  }
+  if (syncPasswordField) {
+    syncPasswordField.value = settings.configSyncPassword || "";
   }
   applyEvidenceProviderVisibility(doc, settings.evidenceProviderMode);
 }
@@ -857,21 +1098,52 @@ function updateSlashLimitStatus(
 function readFormValues(doc: PreferencesDocument): Partial<PersistedSettings> {
   const customPresetsField = getField(doc, CUSTOM_PRESETS_ID);
   const evidenceProviderField = getField(doc, EVIDENCE_PROVIDER_ID);
+  const iconPlacementField = getField(doc, ICON_PLACEMENT_ID);
+  const itemPaneButtonField = getField(doc, ITEM_PANE_BUTTON_ID);
   const mcpAuthTokenField = getField(doc, MCP_AUTH_TOKEN_ID);
   const mcpEndpointField = getField(doc, MCP_ENDPOINT_ID);
+  const syncEnabledField = getField(doc, SYNC_ENABLED_ID);
+  const syncEndpointField = getField(doc, SYNC_ENDPOINT_ID);
+  const syncPasswordField = getField(doc, SYNC_PASSWORD_ID);
+  const syncRemotePathField = getField(doc, SYNC_REMOTE_PATH_ID);
+  const syncUsernameField = getField(doc, SYNC_USERNAME_ID);
+  const workspaceLayoutField = getField(doc, WORKSPACE_LAYOUT_ID);
   const selectedProvider = evidenceProviderField?.value;
   const evidenceProviderMode =
     selectedProvider === "mcp-http" || selectedProvider === "mcp-web-search"
       ? selectedProvider
       : DEFAULT_EVIDENCE_PROVIDER_MODE;
+  const selectedLayout = workspaceLayoutField?.value;
+  const workspaceLayout =
+    selectedLayout === "split" ||
+    selectedLayout === "compact" ||
+    selectedLayout === "stacked"
+      ? selectedLayout
+      : DEFAULT_SETTINGS.workspaceLayout;
+  const selectedIconPlacement = iconPlacementField?.value;
+  const iconPlacement =
+    selectedIconPlacement === "reader-sidebar" ||
+    selectedIconPlacement === "reader-toolbar" ||
+    selectedIconPlacement === "both"
+      ? selectedIconPlacement
+      : DEFAULT_SETTINGS.iconPlacement;
 
   return {
+    configSyncEnabled: Boolean(syncEnabledField?.checked),
+    configSyncEndpoint: syncEndpointField?.value?.trim?.() ?? "",
+    configSyncPassword: syncPasswordField?.value ?? "",
+    configSyncRemotePath:
+      syncRemotePathField?.value?.trim?.() ?? DEFAULT_CONFIG_SYNC_REMOTE_PATH,
+    configSyncUsername: syncUsernameField?.value ?? "",
     customPresets: customPresetsField?.value ?? "",
     evidenceProviderMode,
+    iconPlacement,
+    itemPaneButtonEnabled: itemPaneButtonField?.checked !== false,
     mcpAuthToken: mcpAuthTokenField?.value?.trim?.() ?? "",
     mcpEndpoint: mcpEndpointField?.value?.trim?.() ?? "",
     mcpToolArgumentsTemplate: DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
     mcpToolName: DEFAULT_SETTINGS.mcpToolName,
+    workspaceLayout,
   };
 }
 
@@ -1108,6 +1380,18 @@ function getEvidenceStatusElement(
   ) as PreferencesStatusElement | null;
 }
 
+function getBackupStatusElement(
+  doc: PreferencesDocument,
+): PreferencesStatusElement | null {
+  return doc.getElementById(BACKUP_STATUS_ID) as PreferencesStatusElement | null;
+}
+
+function getSyncStatusElement(
+  doc: PreferencesDocument,
+): PreferencesStatusElement | null {
+  return doc.getElementById(SYNC_STATUS_ID) as PreferencesStatusElement | null;
+}
+
 function buildDebugLogExportPath(): string | null {
   const tempDir =
     (globalThis as { PathUtils?: { tempDir?: string } }).PathUtils?.tempDir ||
@@ -1120,4 +1404,274 @@ function buildDebugLogExportPath(): string | null {
 
   const separator = tempDir.includes("\\") ? "\\" : "/";
   return `${tempDir}${separator}zotero-webai-debug-${Date.now()}.jsonl`;
+}
+
+function buildBackupExportPath(): string | null {
+  const tempDir =
+    (globalThis as { PathUtils?: { tempDir?: string } }).PathUtils?.tempDir ||
+    (globalThis as { OS?: { Constants?: { Path?: { tmpDir?: string } } } }).OS
+      ?.Constants?.Path?.tmpDir ||
+    null;
+  if (!tempDir) {
+    return null;
+  }
+
+  const separator = tempDir.includes("\\") ? "\\" : "/";
+  return `${tempDir}${separator}Zotero-WebAI-config-${Date.now()}.json`;
+}
+
+function buildSettingsBackupJSON(
+  overrides?: Partial<PersistedSettings>,
+): string {
+  const settings = {
+    ...getSettings(),
+    ...overrides,
+  };
+
+  return JSON.stringify(
+    {
+      app: "Zotero WebAI",
+      backupVersion: 1,
+      exportedAt: new Date().toISOString(),
+      settings: pickBackupSettings(settings),
+    },
+    null,
+    2,
+  );
+}
+
+function pickBackupSettings(
+  settings: Partial<PersistedSettings>,
+): Partial<PersistedSettings> {
+  return {
+    configSyncEnabled: Boolean(settings.configSyncEnabled),
+    configSyncEndpoint: settings.configSyncEndpoint || "",
+    configSyncPassword: settings.configSyncPassword || "",
+    configSyncRemotePath:
+      settings.configSyncRemotePath || DEFAULT_CONFIG_SYNC_REMOTE_PATH,
+    configSyncUsername: settings.configSyncUsername || "",
+    customPresets: settings.customPresets || "",
+    evidenceProviderMode:
+      settings.evidenceProviderMode || DEFAULT_EVIDENCE_PROVIDER_MODE,
+    iconPlacement: settings.iconPlacement || DEFAULT_SETTINGS.iconPlacement,
+    itemPaneButtonEnabled: settings.itemPaneButtonEnabled !== false,
+    keyboardShortcut: settings.keyboardShortcut || DEFAULT_SETTINGS.keyboardShortcut,
+    maxContextBudget:
+      Number(settings.maxContextBudget) || DEFAULT_SETTINGS.maxContextBudget,
+    mcpAuthToken: settings.mcpAuthToken || "",
+    mcpEndpoint: settings.mcpEndpoint || DEFAULT_SETTINGS.mcpEndpoint,
+    mcpToolArgumentsTemplate:
+      settings.mcpToolArgumentsTemplate || DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
+    mcpToolName: settings.mcpToolName || DEFAULT_SETTINGS.mcpToolName,
+    workspaceLayout: settings.workspaceLayout || DEFAULT_SETTINGS.workspaceLayout,
+  };
+}
+
+function parseSettingsBackupJSON(value: string): {
+  error?: string;
+  ok: boolean;
+  settings: Partial<PersistedSettings>;
+} {
+  if (!value.trim()) {
+    return { error: "Backup JSON is empty.", ok: false, settings: {} };
+  }
+
+  try {
+    const parsed = JSON.parse(value) as
+      | { settings?: Partial<PersistedSettings> }
+      | Partial<PersistedSettings>;
+    const source = (
+      parsed && typeof parsed === "object" && "settings" in parsed
+        ? parsed.settings
+        : parsed
+    ) as Partial<PersistedSettings> | undefined;
+    if (!source || typeof source !== "object") {
+      return { error: "Backup JSON does not contain settings.", ok: false, settings: {} };
+    }
+    return {
+      ok: true,
+      settings: pickBackupSettings(source),
+    };
+  } catch (error) {
+    return {
+      error: `Invalid backup JSON: ${formatErrorMessage(error)}`,
+      ok: false,
+      settings: {},
+    };
+  }
+}
+
+async function writeLocalTextFile(path: string, text: string): Promise<void> {
+  const zoteroFile = (globalThis as { Zotero?: { File?: {
+    putContentsAsync?: (target: string, contents: string) => Promise<unknown>;
+  } } }).Zotero?.File;
+  if (typeof zoteroFile?.putContentsAsync === "function") {
+    await zoteroFile.putContentsAsync(path, text);
+    return;
+  }
+  throw new Error("Zotero file writer is unavailable");
+}
+
+function copyTextToClipboard(text: string): void {
+  try {
+    Zotero.Utilities.Internal.copyTextToClipboard(text);
+    return;
+  } catch {
+    // Fall through to platform helper.
+  }
+
+  const componentClasses = Components.classes as Record<
+    string,
+    { getService: (interfaceType: unknown) => nsIClipboardHelper }
+  >;
+  const clipboardHelper = componentClasses[
+    "@mozilla.org/widget/clipboardhelper;1"
+  ].getService(Components.interfaces.nsIClipboardHelper);
+  clipboardHelper.copyString(text);
+}
+
+async function testConfigSync(
+  settings: Partial<PersistedSettings>,
+  doc: PreferencesDocument,
+): Promise<{ message: string; ok: boolean }> {
+  const url = buildConfigSyncURL(settings);
+  if (!url) {
+    return { message: "Sync endpoint is required.", ok: false };
+  }
+  try {
+    const response = await fetchWithConfigSyncAuth(doc, url, {
+      method: "GET",
+    }, settings);
+    if (response.ok) {
+      return { message: "Sync endpoint connected; remote backup exists.", ok: true };
+    }
+    if (response.status === 404) {
+      return {
+        message: "Sync endpoint connected; remote backup file does not exist yet.",
+        ok: true,
+      };
+    }
+    return {
+      message: `Sync test failed: HTTP ${response.status}`,
+      ok: false,
+    };
+  } catch (error) {
+    return {
+      message: `Sync test failed: ${formatErrorMessage(error)}`,
+      ok: false,
+    };
+  }
+}
+
+async function pushConfigSync(
+  settings: Partial<PersistedSettings>,
+  backupText: string,
+  doc: PreferencesDocument,
+): Promise<{ message: string; ok: boolean }> {
+  const url = buildConfigSyncURL(settings);
+  if (!url) {
+    return { message: "Sync endpoint is required.", ok: false };
+  }
+  try {
+    const response = await fetchWithConfigSyncAuth(doc, url, {
+      body: backupText,
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+      },
+      method: "PUT",
+    }, settings);
+    if (response.ok || response.status === 201 || response.status === 204) {
+      return { message: "Configuration uploaded to sync endpoint.", ok: true };
+    }
+    return {
+      message: `Configuration upload failed: HTTP ${response.status}`,
+      ok: false,
+    };
+  } catch (error) {
+    return {
+      message: `Configuration upload failed: ${formatErrorMessage(error)}`,
+      ok: false,
+    };
+  }
+}
+
+async function pullConfigSync(
+  settings: Partial<PersistedSettings>,
+  doc: PreferencesDocument,
+): Promise<{ backupText?: string; message: string; ok: boolean }> {
+  const url = buildConfigSyncURL(settings);
+  if (!url) {
+    return { message: "Sync endpoint is required.", ok: false };
+  }
+  try {
+    const response = await fetchWithConfigSyncAuth(doc, url, {
+      method: "GET",
+    }, settings);
+    if (!response.ok) {
+      return {
+        message: `Configuration download failed: HTTP ${response.status}`,
+        ok: false,
+      };
+    }
+    return {
+      backupText: await response.text(),
+      message: "Configuration downloaded.",
+      ok: true,
+    };
+  } catch (error) {
+    return {
+      message: `Configuration download failed: ${formatErrorMessage(error)}`,
+      ok: false,
+    };
+  }
+}
+
+function buildConfigSyncURL(settings: Partial<PersistedSettings>): string {
+  const endpoint = String(settings.configSyncEndpoint || "").trim();
+  if (!endpoint) {
+    return "";
+  }
+  const remotePath = String(
+    settings.configSyncRemotePath || DEFAULT_CONFIG_SYNC_REMOTE_PATH,
+  )
+    .trim()
+    .replace(/^\/+/, "");
+  if (!remotePath || /\.json(?:[?#].*)?$/i.test(endpoint)) {
+    return endpoint;
+  }
+  return `${endpoint.replace(/\/+$/, "")}/${encodeURI(remotePath)}`;
+}
+
+async function fetchWithConfigSyncAuth(
+  doc: PreferencesDocument,
+  url: string,
+  init: RequestInit,
+  settings: Partial<PersistedSettings>,
+): Promise<Response> {
+  const headers = new Headers(init.headers || {});
+  const username = String(settings.configSyncUsername || "");
+  const password = String(settings.configSyncPassword || "");
+  if (username || password) {
+    headers.set("Authorization", `Basic ${base64Encode(`${username}:${password}`, doc)}`);
+  }
+  const requestInit: RequestInit = {
+    ...init,
+    headers: Object.fromEntries(
+      Array.from(headers.entries()),
+    ) as Record<string, string>,
+  };
+  const fetcher = doc.defaultView?.fetch?.bind(doc.defaultView) || fetch;
+  return fetcher(url, requestInit);
+}
+
+function base64Encode(value: string, doc: PreferencesDocument): string {
+  const btoaFn = doc.defaultView?.btoa || (globalThis as { btoa?: (text: string) => string }).btoa;
+  if (typeof btoaFn === "function") {
+    return btoaFn(unescape(encodeURIComponent(value)));
+  }
+  return value;
+}
+
+function formatErrorMessage(error: unknown): string {
+  return error instanceof Error && error.message ? error.message : String(error);
 }

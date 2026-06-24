@@ -5,6 +5,7 @@ import { EventBus } from "../utils/eventBus";
 import { getLocaleID } from "../utils/locale";
 import { Sidebar } from "./components/Sidebar";
 import { getCurrentScope } from "../services/scopeResolver";
+import { getSettings } from "../services/settingsManager";
 import {
   attachSidebarHost,
   createFallbackSidebarHost,
@@ -204,7 +205,14 @@ export class UIFactory {
     tabType: string,
     body?: SectionRenderBody,
   ): boolean {
-    return this.resolveSectionLocation(tabType, body) != null;
+    const location = this.resolveSectionLocation(tabType, body);
+    if (!location) {
+      return false;
+    }
+    if (location === "library" && !getSettings().itemPaneButtonEnabled) {
+      return false;
+    }
+    return true;
   }
 
   private static renderSectionBody(body: SectionRenderBody, tabType: string) {

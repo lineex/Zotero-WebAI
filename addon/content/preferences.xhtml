@@ -67,6 +67,116 @@
           background: rgba(127, 127, 127, 0.04);
         "
       >
+        <description
+          data-l10n-id="ai-assistant-pref-layout-title"
+          value="Layout and Icons"
+          style="font-weight: 600"
+        />
+        <description data-l10n-id="ai-assistant-pref-layout-help">
+          Configure the Zotero WebAI sidebar shell, reader panel layout, and where the WebAI icon appears in Zotero.
+        </description>
+
+        <vbox style="display: flex; flex-direction: column; gap: 6px">
+          <label
+            value="Workspace layout"
+            data-l10n-id="ai-assistant-pref-workspace-layout-label"
+            control="zotero-ai-assistant-pref-workspace-layout"
+            style="width: 150px"
+          />
+          <html:select
+            id="zotero-ai-assistant-pref-workspace-layout"
+            style="
+              min-width: 320px;
+              max-width: 520px;
+              padding: 6px 8px;
+              border-radius: 6px;
+            "
+          >
+            <html:option
+              value="stacked"
+              data-l10n-id="ai-assistant-pref-workspace-layout-stacked"
+            >
+              Stacked sidebar
+            </html:option>
+            <html:option
+              value="split"
+              data-l10n-id="ai-assistant-pref-workspace-layout-split"
+            >
+              Split workspace
+            </html:option>
+            <html:option
+              value="compact"
+              data-l10n-id="ai-assistant-pref-workspace-layout-compact"
+            >
+              Compact reading mode
+            </html:option>
+          </html:select>
+        </vbox>
+
+        <vbox style="display: flex; flex-direction: column; gap: 6px">
+          <label
+            value="Reader icon position"
+            data-l10n-id="ai-assistant-pref-icon-placement-label"
+            control="zotero-ai-assistant-pref-icon-placement"
+            style="width: 150px"
+          />
+          <html:select
+            id="zotero-ai-assistant-pref-icon-placement"
+            style="
+              min-width: 320px;
+              max-width: 520px;
+              padding: 6px 8px;
+              border-radius: 6px;
+            "
+          >
+            <html:option
+              value="both"
+              data-l10n-id="ai-assistant-pref-icon-placement-both"
+            >
+              Reader side rail + toolbar
+            </html:option>
+            <html:option
+              value="reader-sidebar"
+              data-l10n-id="ai-assistant-pref-icon-placement-sidebar"
+            >
+              Reader side rail only
+            </html:option>
+            <html:option
+              value="reader-toolbar"
+              data-l10n-id="ai-assistant-pref-icon-placement-toolbar"
+            >
+              Reader toolbar only
+            </html:option>
+          </html:select>
+        </vbox>
+
+        <html:label
+          style="
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 620px;
+          "
+        >
+          <html:input
+            id="zotero-ai-assistant-pref-item-pane-button"
+            type="checkbox"
+          />
+          <html:span data-l10n-id="ai-assistant-pref-item-pane-button-label">Show Zotero WebAI entry in the item information side pane</html:span>
+        </html:label>
+      </vbox>
+
+      <vbox
+        style="
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          padding: 14px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          border-radius: 10px;
+          background: rgba(127, 127, 127, 0.04);
+        "
+      >
         <description data-l10n-id="ai-assistant-pref-evidence-description" />
         <label
           value="Evidence Provider"
@@ -207,6 +317,181 @@
             data-l10n-id="ai-assistant-pref-slash-add"
           />
           <description id="zotero-ai-assistant-pref-slash-limit-status" />
+        </html:div>
+      </vbox>
+
+      <vbox
+        style="
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          padding: 14px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          border-radius: 10px;
+          background: rgba(127, 127, 127, 0.04);
+        "
+      >
+        <description
+          data-l10n-id="ai-assistant-pref-backup-title"
+          value="Configuration Backup and Sync"
+          style="font-weight: 600"
+        />
+        <description data-l10n-id="ai-assistant-pref-backup-help">
+          Export your WebAI layout, MCP, and slash skill settings as JSON, or sync that JSON to a WebDAV-compatible endpoint.
+        </description>
+
+        <html:textarea
+          id="zotero-ai-assistant-pref-backup-json"
+          spellcheck="false"
+          placeholder="Generate or paste Zotero WebAI backup JSON here"
+          style="
+            box-sizing: border-box;
+            min-height: 130px;
+            resize: vertical;
+            width: 100%;
+            border-radius: 8px;
+            padding: 8px 10px;
+            font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+            font-size: 12px;
+          "
+        ></html:textarea>
+
+        <html:div
+          style="
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+          "
+        >
+          <button
+            id="zotero-ai-assistant-pref-backup-generate"
+            label="Generate JSON"
+            data-l10n-id="ai-assistant-pref-backup-generate"
+          />
+          <button
+            id="zotero-ai-assistant-pref-backup-copy"
+            label="Copy JSON"
+            data-l10n-id="ai-assistant-pref-backup-copy"
+          />
+          <button
+            id="zotero-ai-assistant-pref-backup-export"
+            label="Export File"
+            data-l10n-id="ai-assistant-pref-backup-export"
+          />
+          <button
+            id="zotero-ai-assistant-pref-backup-import"
+            label="Import JSON"
+            data-l10n-id="ai-assistant-pref-backup-import"
+          />
+          <description
+            id="zotero-ai-assistant-pref-backup-status"
+            style="margin-inline-start: 8px"
+          />
+        </html:div>
+
+        <separator class="thin" />
+
+        <html:label
+          style="
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 620px;
+          "
+        >
+          <html:input
+            id="zotero-ai-assistant-pref-sync-enabled"
+            type="checkbox"
+          />
+          <html:span data-l10n-id="ai-assistant-pref-sync-enabled-label">Enable configuration sync controls</html:span>
+        </html:label>
+
+        <hbox align="center">
+          <label
+            value="WebDAV URL"
+            data-l10n-id="ai-assistant-pref-sync-endpoint-label"
+            control="zotero-ai-assistant-pref-sync-endpoint"
+            style="width: 150px"
+          />
+          <html:input
+            id="zotero-ai-assistant-pref-sync-endpoint"
+            type="url"
+            placeholder="https://example.com/webdav/folder"
+            style="flex: 1; min-width: 0"
+          />
+        </hbox>
+
+        <hbox align="center">
+          <label
+            value="Remote file"
+            data-l10n-id="ai-assistant-pref-sync-remote-path-label"
+            control="zotero-ai-assistant-pref-sync-remote-path"
+            style="width: 150px"
+          />
+          <html:input
+            id="zotero-ai-assistant-pref-sync-remote-path"
+            type="text"
+            placeholder="Zotero-WebAI-config.json"
+            style="flex: 1; min-width: 0"
+          />
+        </hbox>
+
+        <hbox align="center">
+          <label
+            value="Username"
+            data-l10n-id="ai-assistant-pref-sync-username-label"
+            control="zotero-ai-assistant-pref-sync-username"
+            style="width: 150px"
+          />
+          <html:input
+            id="zotero-ai-assistant-pref-sync-username"
+            type="text"
+            style="flex: 1; min-width: 0"
+          />
+        </hbox>
+
+        <hbox align="center">
+          <label
+            value="Password"
+            data-l10n-id="ai-assistant-pref-sync-password-label"
+            control="zotero-ai-assistant-pref-sync-password"
+            style="width: 150px"
+          />
+          <html:input
+            id="zotero-ai-assistant-pref-sync-password"
+            type="password"
+            style="flex: 1; min-width: 0"
+          />
+        </hbox>
+
+        <html:div
+          style="
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+          "
+        >
+          <button
+            id="zotero-ai-assistant-pref-sync-test"
+            label="Test"
+            data-l10n-id="ai-assistant-pref-sync-test"
+          />
+          <button
+            id="zotero-ai-assistant-pref-sync-push"
+            label="Upload"
+            data-l10n-id="ai-assistant-pref-sync-push"
+          />
+          <button
+            id="zotero-ai-assistant-pref-sync-pull"
+            label="Download"
+            data-l10n-id="ai-assistant-pref-sync-pull"
+          />
+          <description
+            id="zotero-ai-assistant-pref-sync-status"
+            style="margin-inline-start: 8px"
+          />
         </html:div>
       </vbox>
       <html:textarea

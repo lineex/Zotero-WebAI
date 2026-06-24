@@ -8,6 +8,9 @@ declare namespace _ZoteroTypes {
   interface Prefs {
     PluginPrefsMap: {
       "customPresets": string;
+      "workspaceLayout": string;
+      "iconPlacement": string;
+      "itemPaneButtonEnabled": boolean;
       "maxContextBudget": number;
       "sidebarVisible": boolean;
       "evidenceEnabled": boolean;
@@ -16,6 +19,12 @@ declare namespace _ZoteroTypes {
       "mcpToolName": string;
       "mcpToolArgumentsTemplate": string;
       "mcpAuthToken": string;
+      "configSyncEnabled": boolean;
+      "configSyncEndpoint": string;
+      "configSyncRemotePath": string;
+      "configSyncUsername": string;
+      "configSyncPassword": string;
+      "configSyncSnapshot": string;
     };
   }
 }

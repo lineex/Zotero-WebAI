@@ -2,6 +2,7 @@ import React from "react";
 import { config } from "../../package.json";
 import { EventBus } from "../utils/eventBus";
 import { Sidebar } from "../ui/components/Sidebar";
+import { getSettings } from "../services/settingsManager";
 
 type ReactRoot = import("react-dom/client").Root;
 
@@ -396,6 +397,13 @@ function createReaderButton(doc: Document): HTMLElement {
 }
 
 function ensureReaderButtonPlacement(state: ReaderPanelState): void {
+  const iconPlacement = getSettings().iconPlacement;
+  if (iconPlacement === "reader-toolbar") {
+    state.navButton.remove();
+    removeEmptyRail(state.hostDocument);
+    state.rail = null;
+    return;
+  }
   const rail = getOrCreateReaderRail(state);
   state.rail = rail;
   const nativePlacement = rail.dataset.placement === "native";
