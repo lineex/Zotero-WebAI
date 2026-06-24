@@ -4,6 +4,7 @@ import { getReaderCurrentPage, getReaderSelectedText } from "./readerPrivate";
 import { createTraceId, debugLog } from "../utils/debugLog";
 import { UIFactory } from "../ui/ui";
 import { getSettings } from "../services/settingsManager";
+import { EventBus } from "../utils/eventBus";
 import { syncActiveReaderWebAIPanel } from "./readerWebAIPanel";
 
 type ReaderSelectionPopupEvent = Parameters<
@@ -57,6 +58,7 @@ let contextMenuHandler:
 let toolbarHandler:
   | ((event: ReaderToolbarEvent) => void | Promise<void>)
   | null = null;
+let settingsHandler: ((event: Event) => void) | null = null;
 
 function dispatchReaderAction(
   action: ReaderActionDetail["action"],
@@ -309,8 +311,7 @@ function onRenderToolbar(event: ReaderToolbarEvent): void {
   }
 
   void reader;
-  syncActiveReaderWebAIPanel();
-  ensureReaderToolbarButton(doc, append);
+  syncActiveReaderWebAIEntrypoints(doc, append);
 }
 
 function ensureReaderToolbarButton(
@@ -320,7 +321,7 @@ function ensureReaderToolbarButton(
   const mainWindow = Zotero.getMainWindow?.();
   const existing = doc.getElementById(TOOLBAR_BUTTON_ID) as HTMLElement | null;
   const iconPlacement = getSettings().iconPlacement;
-  if (iconPlacement === "reader-sidebar") {
+  if (!shouldShowToolbarIcon(iconPlacement)) {
     existing?.remove();
     return;
   }
@@ -354,6 +355,43 @@ function ensureReaderToolbarButton(
     toolbar?.appendChild(button);
   }
   moveToolbarButtonToMiddle(doc, button);
+}
+
+function shouldShowToolbarIcon(iconPlacement: string): boolean {
+  return iconPlacement === "both" || iconPlacement === "reader-toolbar";
+}
+
+function syncActiveReaderWebAIEntrypoints(
+  doc?: Document | null,
+  append?: (...nodes: unknown[]) => void,
+): void {
+  const reader = getActiveReader();
+  const readerDoc = doc || reader?._iframeWindow?.document || null;
+  if (readerDoc) {
+    ensureReaderToolbarButton(readerDoc, append);
+  }
+  syncActiveReaderWebAIPanel();
+}
+
+function getActiveReader(): ReaderLike | null {
+  const win = Zotero.getMainWindow?.() as
+    | (Window & {
+        Zotero_Tabs?: {
+          _selectedID?: string;
+          selectedID?: string;
+          selectedType?: string;
+        };
+      })
+    | null;
+  const selectedType = `${win?.Zotero_Tabs?.selectedType || ""}`.toLowerCase();
+  if (!selectedType.includes("reader")) {
+    return null;
+  }
+  const selectedID = `${win?.Zotero_Tabs?.selectedID || win?.Zotero_Tabs?._selectedID || ""}`;
+  if (!selectedID) {
+    return null;
+  }
+  return Zotero.Reader.getByTabID(selectedID) as ReaderLike | null;
 }
 
 function moveToolbarButtonToMiddle(doc: Document, button: HTMLElement): void {
@@ -429,6 +467,9 @@ export function initReaderIntegration(): void {
   popupHandler = onRenderTextSelectionPopup;
   contextMenuHandler = onCreateViewContextMenu;
   toolbarHandler = onRenderToolbar;
+  settingsHandler = () => {
+    syncActiveReaderWebAIEntrypoints();
+  };
 
   Zotero.Reader.registerEventListener(
     "renderTextSelectionPopup",
@@ -445,6 +486,7 @@ export function initReaderIntegration(): void {
     toolbarHandler,
     config.addonID,
   );
+  EventBus.getInstance().addEventListener("settingsChange", settingsHandler);
 
   debugLog.info("reader.integration.registered", {
     surface: "reader",
@@ -464,5 +506,9 @@ export function cleanupReaderIntegration(): void {
   if (toolbarHandler) {
     Zotero.Reader.unregisterEventListener("renderToolbar", toolbarHandler);
     toolbarHandler = null;
+  }
+  if (settingsHandler) {
+    EventBus.getInstance().removeEventListener("settingsChange", settingsHandler);
+    settingsHandler = null;
   }
 }

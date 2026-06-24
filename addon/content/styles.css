@@ -7,6 +7,166 @@
   min-width: 0;
 }
 
+.zotero-webai-shell {
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+  width: 100%;
+}
+
+.zotero-webai-shell-header {
+  flex: 0 0 auto;
+  position: sticky;
+  top: 0;
+  z-index: 2;
+}
+
+.zotero-webai-shell-scope {
+  box-shadow: 0 1px 0 rgba(0, 0, 0, 0.02);
+}
+
+.zotero-webai-shell-body {
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  min-width: 0;
+  overflow: hidden;
+}
+
+.zotero-webai-shell[data-layout="compact"] .zotero-webai-shell-header {
+  gap: 6px;
+  padding: 8px;
+}
+
+.zotero-webai-shell[data-layout="compact"] .zotero-webai-shell-scope {
+  padding-block: 6px;
+}
+
+.zotero-webai-workspace {
+  box-sizing: border-box;
+  min-height: 0;
+  min-width: 0;
+}
+
+.zotero-webai-web,
+.zotero-webai-toolbar,
+.zotero-webai-chat,
+.zotero-webai-composer {
+  box-sizing: border-box;
+  min-width: 0;
+}
+
+.zotero-webai-workspace[data-layout="stacked"] {
+  display: flex !important;
+  flex-direction: column !important;
+}
+
+.zotero-webai-workspace[data-layout="stacked"] .zotero-webai-web {
+  flex: 0 0 auto !important;
+  width: 100% !important;
+}
+
+.zotero-webai-workspace[data-layout="stacked"] .zotero-webai-chat {
+  flex: 1 1 auto !important;
+  min-height: 260px !important;
+}
+
+.zotero-webai-workspace[data-layout="split"] {
+  align-items: stretch !important;
+  display: grid !important;
+  gap: 8px !important;
+  grid-template-areas:
+    "toolbar toolbar"
+    "web chat"
+    "composer composer" !important;
+  grid-template-columns: minmax(240px, 0.96fr) minmax(300px, 1.04fr) !important;
+  grid-template-rows: auto minmax(0, 1fr) auto !important;
+}
+
+.zotero-webai-workspace[data-layout="split"] .zotero-webai-web {
+  grid-area: web !important;
+  height: auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+}
+
+.zotero-webai-workspace[data-layout="split"] .zotero-webai-toolbar {
+  grid-area: toolbar !important;
+}
+
+.zotero-webai-workspace[data-layout="split"] .zotero-webai-chat {
+  grid-area: chat !important;
+  height: auto !important;
+  max-height: none !important;
+  min-height: 0 !important;
+}
+
+.zotero-webai-workspace[data-layout="split"] .zotero-webai-composer {
+  grid-area: composer !important;
+}
+
+.zotero-webai-workspace[data-layout="split"].zotero-webai-workspace--web-hidden {
+  grid-template-areas:
+    "toolbar"
+    "chat"
+    "composer" !important;
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+.zotero-webai-workspace[data-layout="compact"] {
+  display: flex !important;
+  flex-direction: column !important;
+  gap: 6px !important;
+  padding: 6px !important;
+}
+
+.zotero-webai-workspace[data-layout="compact"] .zotero-webai-web {
+  flex: 0 0 auto !important;
+  min-height: 140px !important;
+}
+
+.zotero-webai-workspace[data-layout="compact"] .zotero-webai-toolbar {
+  gap: 6px !important;
+  padding: 6px !important;
+}
+
+.zotero-webai-workspace[data-layout="compact"] .zotero-webai-service-bar,
+.zotero-webai-workspace[data-layout="compact"] .zotero-webai-toolbar-actions {
+  gap: 4px !important;
+}
+
+.zotero-webai-workspace[data-layout="compact"] .zotero-webai-chat {
+  flex: 1 1 auto !important;
+  min-height: 220px !important;
+}
+
+.zotero-webai-workspace[data-layout="compact"] .zotero-webai-composer {
+  min-height: 118px !important;
+  padding: 8px !important;
+}
+
+.zotero-webai-workspace--reader .zotero-webai-chat {
+  flex: 1 1 auto !important;
+}
+
+.zotero-webai-results-layout,
+.zotero-webai-transcript {
+  min-height: 0;
+  min-width: 0;
+}
+
+.zotero-webai-history {
+  scrollbar-width: thin;
+}
+
+.zotero-webai-composer-input {
+  min-width: 0;
+}
+
 .ai-assistant-selection-popup {
   font: inherit;
 }

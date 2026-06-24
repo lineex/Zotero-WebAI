@@ -231,6 +231,7 @@ export async function toggleReaderWebAIPanel(
 export function syncActiveReaderWebAIPanel(): void {
   const reader = getActiveReader();
   if (!reader) {
+    cleanupDetachedReaderRails();
     return;
   }
   ensureReaderWebAIPanel(reader, reader._iframeWindow?.document || null);
@@ -398,10 +399,13 @@ function createReaderButton(doc: Document): HTMLElement {
 
 function ensureReaderButtonPlacement(state: ReaderPanelState): void {
   const iconPlacement = getSettings().iconPlacement;
-  if (iconPlacement === "reader-toolbar") {
+  if (!shouldShowRailIcon(iconPlacement)) {
     state.navButton.remove();
     removeEmptyRail(state.hostDocument);
     state.rail = null;
+    if (state.panel.hidden || state.panel.dataset.open !== "true") {
+      restoreEmbeddedReaderLayout(state);
+    }
     return;
   }
   const rail = getOrCreateReaderRail(state);
@@ -416,6 +420,10 @@ function ensureReaderButtonPlacement(state: ReaderPanelState): void {
     applyEmbeddedReaderLayout(state);
   }
   syncReaderRailPosition(state);
+}
+
+function shouldShowRailIcon(iconPlacement: string): boolean {
+  return iconPlacement === "both" || iconPlacement === "reader-sidebar";
 }
 
 function getOrCreateReaderRail(state: ReaderPanelState): HTMLElement {
@@ -540,6 +548,16 @@ function removeEmptyRail(doc: Document): void {
   const rail = doc.getElementById(READER_RAIL_ID);
   if (rail && rail.childElementCount === 0) {
     rail.remove();
+  }
+}
+
+function cleanupDetachedReaderRails(): void {
+  for (const state of Array.from(panelStates)) {
+    if (!state.hostDocument.contains(state.panel)) {
+      cleanupReaderWebAIPanelState(state);
+      continue;
+    }
+    ensureReaderButtonPlacement(state);
   }
 }
 
@@ -844,14 +862,14 @@ function ensureHostStyle(doc: Document): void {
       direction: rtl;
       display: flex;
       flex-direction: column;
-      flex: 1 1 auto;
+      flex: 0 0 min(${DEFAULT_PANEL_WIDTH}px, 44%);
       height: 100%;
-      max-width: 100%;
-      min-width: 0;
-      overflow: auto;
+      max-width: min(${MAX_PANEL_WIDTH}px, 58%);
+      min-width: ${MIN_PANEL_WIDTH}px;
+      overflow: hidden;
       position: relative;
-      resize: vertical;
-      width: 100%;
+      resize: horizontal;
+      width: min(${DEFAULT_PANEL_WIDTH}px, 44%);
       z-index: 1;
     }
     #${PANEL_ID}.zotero-webai-reader-panel > * {
@@ -936,7 +954,7 @@ function ensureHostStyle(doc: Document): void {
       flex-direction: column;
       gap: 2px;
       height: 100%;
-      justify-content: flex-start;
+      justify-content: center;
       min-height: 0;
       padding: 8px 3px;
     }

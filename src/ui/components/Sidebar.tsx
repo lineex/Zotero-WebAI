@@ -8,6 +8,7 @@ import { getSettings, type Settings } from "../../services/settingsManager";
 import type { ScopeContext } from "../../types/scope";
 import { createHostEvent } from "../../utils/domEvents";
 import { debugLog } from "../../utils/debugLog";
+import { getRequestedLanguage, isChineseLocale } from "../../utils/locale";
 import {
   buildReaderActionDraft,
   mergeReaderActionScope,
@@ -42,6 +43,7 @@ export const Sidebar: React.FC<SidebarProps> = ({
   const [themeRefreshKey, setThemeRefreshKey] = useState(0);
   const scopeSyncVersionRef = useRef(0);
   const theme = getSidebarTheme(hostWindow);
+  const isZh = isChineseLocale(getRequestedLanguage());
 
   const syncSidebarScope = async (
     nextScope: ScopeContext | null,
@@ -187,6 +189,9 @@ export const Sidebar: React.FC<SidebarProps> = ({
   return (
     <SidebarErrorBoundary>
       <div
+        className="zotero-webai-shell"
+        data-layout={settings.workspaceLayout}
+        data-location={location}
         key={themeRefreshKey}
         style={{
           ...styles.container,
@@ -195,32 +200,67 @@ export const Sidebar: React.FC<SidebarProps> = ({
         }}
       >
         <header
+          className="zotero-webai-shell-header"
           style={{
             ...styles.shellHeader,
             background: theme.surfaceBackground,
             borderColor: theme.softBorder,
           }}
         >
-          <div style={styles.shellTitleBlock}>
-            <span style={{ ...styles.shellTitle, color: theme.text }}>
-              Zotero WebAI
-            </span>
-            <span style={{ ...styles.shellMeta, color: theme.mutedText }}>
-              {formatSidebarScope(location, scope)}
+          <div style={styles.shellHeaderTop}>
+            <div style={styles.shellTitleBlock}>
+              <span style={{ ...styles.shellTitle, color: theme.text }}>
+                Zotero WebAI
+              </span>
+              <span style={{ ...styles.shellMeta, color: theme.mutedText }}>
+                {isZh ? "网页 AI 阅读工作区" : "Web AI reading workspace"}
+              </span>
+            </div>
+            <span
+              className="zotero-webai-shell-chip"
+              style={{
+                ...styles.shellBadge,
+                background: theme.badgeBackground,
+                borderColor: theme.badgeBorder,
+                color: theme.badgeText,
+              }}
+              title={isZh ? "当前工作区布局" : "Current workspace layout"}
+            >
+              {formatLayoutBadge(settings.workspaceLayout, isZh)}
             </span>
           </div>
-          <span
+          <div
+            className="zotero-webai-shell-scope"
             style={{
-              ...styles.shellBadge,
-              background: theme.badgeBackground,
-              borderColor: theme.badgeBorder,
-              color: theme.badgeText,
+              ...styles.scopeCard,
+              background: theme.panelBackground,
+              borderColor: theme.softBorder,
             }}
           >
-            {formatLayoutBadge(settings.workspaceLayout)}
-          </span>
+            <div style={styles.scopeMainLine}>
+              <span style={{ ...styles.scopeEyebrow, color: theme.mutedText }}>
+                {isZh ? "当前范围" : "Current Scope"}
+              </span>
+              <span style={{ ...styles.scopeSurface, color: theme.badgeText }}>
+                {location === "reader"
+                  ? isZh
+                    ? "阅读器"
+                    : "Reader"
+                  : isZh
+                    ? "条目栏"
+                    : "Library"}
+              </span>
+            </div>
+            <div style={{ ...styles.scopeTitle, color: theme.text }}>
+              {scope?.label || (isZh ? "未选择条目" : "No item selected")}
+            </div>
+            <div style={{ ...styles.scopeMeta, color: theme.mutedText }}>
+              {formatContextState(contextSummary, scope, isZh)}
+            </div>
+          </div>
         </header>
         <div
+          className="zotero-webai-shell-body"
           style={{
             ...styles.webWorkspacePane,
             ...(settings.workspaceLayout === "compact"
@@ -286,25 +326,61 @@ class SidebarErrorBoundary extends React.Component<
   }
 }
 
-function formatSidebarScope(
-  location: "library" | "reader",
-  scope: ScopeContext | null,
+function formatLayoutBadge(
+  layout: Settings["workspaceLayout"],
+  isZh = false,
 ): string {
-  const surface = location === "reader" ? "Reader" : "Library";
-  if (!scope?.label) {
-    return surface;
-  }
-  return `${surface} - ${scope.label}`;
-}
-
-function formatLayoutBadge(layout: Settings["workspaceLayout"]): string {
   if (layout === "split") {
-    return "Split";
+    return isZh ? "Split 分栏" : "Split";
   }
   if (layout === "compact") {
-    return "Compact";
+    return isZh ? "Compact 紧凑" : "Compact";
   }
-  return "Stacked";
+  return isZh ? "Stacked 堆叠" : "Stacked";
+}
+
+function formatContextState(
+  contextSummary: AssembledContext | null,
+  scope: ScopeContext | null,
+  isZh: boolean,
+): string {
+  if (!scope) {
+    return isZh ? "等待 Zotero 当前条目或 PDF" : "Waiting for the current Zotero item or PDF";
+  }
+  if (!contextSummary) {
+    return isZh ? `${formatScopeType(scope.type, isZh)} - 正在读取上下文` : `${formatScopeType(scope.type, isZh)} - reading context`;
+  }
+
+  const parts = [formatScopeType(scope.type, isZh)];
+  if (contextSummary.fullText) {
+    parts.push(
+      isZh
+        ? `全文 ${contextSummary.fullText.length.toLocaleString()} 字符`
+        : `Full text ${contextSummary.fullText.length.toLocaleString()} chars`,
+    );
+  } else if (contextSummary.metadata) {
+    parts.push(isZh ? "元数据可用" : "metadata ready");
+  } else {
+    parts.push(isZh ? "上下文待加载" : "context pending");
+  }
+  if (contextSummary.selectedText) {
+    parts.push(
+      isZh
+        ? `选区 ${contextSummary.selectedText.length.toLocaleString()} 字符`
+        : `selection ${contextSummary.selectedText.length.toLocaleString()} chars`,
+    );
+  }
+  if (contextSummary.blockingMessage) {
+    parts.push(isZh ? "需要检查全文" : "full text needs attention");
+  }
+  return parts.join(" - ");
+}
+
+function formatScopeType(type: ScopeContext["type"], isZh: boolean): string {
+  if (type === "pdf") return isZh ? "PDF" : "PDF";
+  if (type === "paper") return isZh ? "论文" : "Paper";
+  if (type === "collection") return isZh ? "集合" : "Collection";
+  return isZh ? "手动选择" : "Manual selection";
 }
 
 async function summarizeScope(
@@ -349,16 +425,22 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.96em",
   },
   shellHeader: {
-    alignItems: "center",
+    alignItems: "stretch",
     borderBottom: "1px solid #e0e0e0",
     boxSizing: "border-box",
     display: "flex",
+    flexDirection: "column",
     flex: "0 0 auto",
     gap: "8px",
-    justifyContent: "space-between",
-    minHeight: "44px",
     minWidth: 0,
-    padding: "8px 10px",
+    padding: "10px",
+  },
+  shellHeaderTop: {
+    alignItems: "center",
+    display: "flex",
+    gap: "8px",
+    justifyContent: "space-between",
+    minWidth: 0,
   },
   shellTitleBlock: {
     display: "flex",
@@ -387,6 +469,51 @@ const styles: Record<string, React.CSSProperties> = {
     fontWeight: 700,
     lineHeight: 1.2,
     padding: "3px 8px",
+    whiteSpace: "nowrap",
+  },
+  scopeCard: {
+    border: "1px solid #e0e0e0",
+    borderRadius: "8px",
+    boxSizing: "border-box",
+    display: "flex",
+    flexDirection: "column",
+    gap: "3px",
+    minWidth: 0,
+    padding: "8px 9px",
+  },
+  scopeMainLine: {
+    alignItems: "center",
+    display: "flex",
+    gap: "6px",
+    justifyContent: "space-between",
+    minWidth: 0,
+  },
+  scopeEyebrow: {
+    fontSize: typography.caption,
+    fontWeight: 700,
+    letterSpacing: 0,
+    lineHeight: 1.2,
+    textTransform: "uppercase",
+  },
+  scopeSurface: {
+    fontSize: typography.caption,
+    fontWeight: 700,
+    lineHeight: 1.2,
+    whiteSpace: "nowrap",
+  },
+  scopeTitle: {
+    fontSize: typography.body,
+    fontWeight: 700,
+    lineHeight: 1.3,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
+  },
+  scopeMeta: {
+    fontSize: typography.caption,
+    lineHeight: 1.3,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
     whiteSpace: "nowrap",
   },
   errorBoundary: {

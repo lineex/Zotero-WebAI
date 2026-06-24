@@ -2116,6 +2116,18 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
   return (
     <section
+      className={[
+        "zotero-webai-workspace",
+        `zotero-webai-workspace--${workspaceLayout}`,
+        isReaderWorkspace
+          ? "zotero-webai-workspace--reader"
+          : "zotero-webai-workspace--library",
+        chatCollapsed ? "zotero-webai-workspace--web-hidden" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
+      data-layout={workspaceLayout}
+      data-location={location}
       style={{
         ...styles.container,
         ...(isSplitLayout ? styles.splitContainer : {}),
@@ -2125,6 +2137,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       }}
     >
       <div
+        className="zotero-webai-web"
+        data-collapsed={chatCollapsed ? "true" : "false"}
         ref={frameHostRef}
         style={{
           ...styles.frameHost,
@@ -2140,6 +2154,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
       {isZAILoginMode ? (
         <div
+          className="zotero-webai-login-bar"
           style={{
             ...styles.loginModeBar,
             background: theme.surfaceBackground,
@@ -2229,6 +2244,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         </div>
       ) : (
       <div
+        className="zotero-webai-toolbar"
         style={{
           ...styles.frameToolbar,
           ...(isSplitLayout ? styles.splitToolbar : {}),
@@ -2236,7 +2252,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           borderColor: theme.softBorder,
         }}
       >
-        <div style={styles.serviceBar}>
+        <div className="zotero-webai-service-bar" style={styles.serviceBar}>
           {SERVICES.map((candidate) => (
             <button
               key={candidate.id}
@@ -2257,7 +2273,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             </button>
           ))}
         </div>
-        <div style={styles.frameActions}>
+        <div className="zotero-webai-toolbar-actions" style={styles.frameActions}>
           <button
             style={{
               ...styles.miniButton,
@@ -2387,6 +2403,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
       {!isZAILoginMode && (
         <div
+          className="zotero-webai-chat"
           style={{
             ...styles.executionPanel,
             ...(isSplitLayout ? styles.splitExecutionPanel : {}),
@@ -2397,6 +2414,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           }}
         >
           <div
+            className="zotero-webai-chat-header"
             style={{
               ...styles.executionHeader,
               borderColor: theme.softBorder,
@@ -2411,9 +2429,10 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               </span>
             </div>
           </div>
-          <div style={styles.resultsLayout}>
+          <div className="zotero-webai-results-layout" style={styles.resultsLayout}>
               {historyVisible && (
                 <aside
+                  className="zotero-webai-history"
                   style={{
                     ...styles.historyPanel,
                     background: theme.panelBackground,
@@ -2486,7 +2505,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
                   </div>
                 </aside>
               )}
-              <div ref={transcriptRef} style={styles.executionList}>
+              <div
+                className="zotero-webai-transcript"
+                ref={transcriptRef}
+                style={styles.executionList}
+              >
                 {transcriptTurns.length ? (
                   transcriptTurns.map(renderTranscriptTurn)
                 ) : (
@@ -2506,6 +2529,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
 
       {!isZAILoginMode && (
         <div
+          className="zotero-webai-composer"
           style={{
             ...styles.composerPanel,
             ...(isSplitLayout ? styles.splitComposerPanel : {}),
@@ -2516,6 +2540,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         >
         {showSlashMenu && (
           <div
+            className="zotero-webai-slash-menu"
             style={{
               ...styles.slashMenu,
               background: theme.surfaceBackground,
@@ -2571,6 +2596,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         )}
 
         <textarea
+          className="zotero-webai-composer-input"
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={handleKeyDown}
           onPaste={(event) => void runAction(() => handleComposerPaste(event))}
@@ -2626,7 +2652,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           </div>
         )}
 
-        <div style={styles.composerFooter}>
+        <div className="zotero-webai-composer-footer" style={styles.composerFooter}>
           <div
             style={{
               ...styles.status,
