@@ -19,6 +19,7 @@ import { registerSidebarRefreshHandler } from "./sidebarRuntime";
 import { typography } from "./typography";
 import {
   cleanupReaderWebAIPanelsForWindow,
+  syncActiveReaderWebAIPanel,
   type ReaderWebAIReaderLike,
 } from "../modules/readerWebAIPanel";
 
@@ -122,6 +123,9 @@ export class UIFactory {
     this.removeTabBarButton(win);
     void this.requestSectionRefresh(win);
     this.syncLibraryEmptyStateHost(win);
+    if (this.getSelectedLocation(win) === "reader") {
+      syncActiveReaderWebAIPanel();
+    }
   }
 
   static refreshAllWindows() {

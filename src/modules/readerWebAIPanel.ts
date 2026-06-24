@@ -70,13 +70,18 @@ const ICON_SRC = `chrome://${config.addonRef}/content/icons/icon-20.png`;
 const READER_SIDE_NAV_SELECTORS = [
   "#zotero-context-pane-sidenav",
   "#zotero-view-item-sidenav",
+  "#zotero-item-pane-sidenav",
   "#zotero-reader-sidenav",
   "#zotero-reader-side-nav",
   "#zotero-reader-sidebar-sidenav",
+  "zotero-context-pane sidenav",
+  "#zotero-context-pane sidenav",
+  "#zotero-context-pane .sidenav",
   "#zotero-reader-sidebar nav",
   "#zotero-reader-sidebar .sidenav",
   ".zotero-context-pane-sidenav",
   ".zotero-view-item-sidenav",
+  ".zotero-item-pane-sidenav",
   ".zotero-reader-sidenav",
   ".zotero-reader-side-nav",
   ".zotero-reader-sidebar-sidenav",
@@ -449,6 +454,11 @@ function getOrCreateReaderRail(state: ReaderPanelState): HTMLElement {
 }
 
 function findReaderSideNav(state: ReaderPanelState): Element | null {
+  const globalSideNav = findGlobalReaderSideNav(state);
+  if (globalSideNav) {
+    return globalSideNav;
+  }
+
   const searchRoots = collectReaderSearchRoots(state);
   for (const root of searchRoots) {
     for (const selector of READER_SIDE_NAV_SELECTORS) {
@@ -468,9 +478,30 @@ function findReaderSideNav(state: ReaderPanelState): Element | null {
   return null;
 }
 
+function findGlobalReaderSideNav(state: ReaderPanelState): Element | null {
+  for (const selector of READER_SIDE_NAV_SELECTORS) {
+    try {
+      const candidates = Array.from(
+        state.hostDocument.querySelectorAll(selector),
+      ) as Element[];
+      const match = candidates.find((candidate) =>
+        isUsableReaderSideNav(candidate, state, true),
+      );
+      if (match) {
+        return match;
+      }
+    } catch {
+      // Zotero chrome can expose mixed XUL/HTML nodes; keep probing.
+    }
+  }
+  return null;
+}
+
 function collectReaderSearchRoots(state: ReaderPanelState): Element[] {
   const roots: Element[] = [];
   pushUniqueElement(roots, state.parent);
+  pushUniqueElement(roots, state.hostDocument.documentElement);
+  pushUniqueElement(roots, state.hostDocument.body);
 
   const iframe = state.reader._iframe;
   let current = iframe?.parentElement ?? null;
@@ -503,6 +534,7 @@ function pushUniqueElement(elements: Element[], element?: Element | null): void 
 function isUsableReaderSideNav(
   candidate: Element,
   state: ReaderPanelState,
+  allowGlobalNative = false,
 ): boolean {
   if (!(candidate instanceof state.mainWindow.Element)) {
     return false;
@@ -534,6 +566,10 @@ function isUsableReaderSideNav(
   if (!rect || rect.width <= 0 || rect.height <= 0) {
     return false;
   }
+  if (allowGlobalNative && isPreferredReaderSideNav(candidate)) {
+    return rect.width <= 120;
+  }
+
   const parentRect = (state.parent as HTMLElement).getBoundingClientRect?.();
   if (!parentRect || parentRect.width <= 0) {
     return true;
@@ -542,6 +578,19 @@ function isUsableReaderSideNav(
   const nearRightEdge = rect.left >= parentRect.right - Math.max(96, rect.width + 32);
   const narrowEnough = rect.width <= Math.min(96, Math.max(40, parentRect.width * 0.2));
   return nearRightEdge && narrowEnough;
+}
+
+function isPreferredReaderSideNav(candidate: Element): boolean {
+  const id = candidate.id || "";
+  const className = String(candidate.className || "");
+  const localName = candidate.localName || "";
+  return (
+    id === "zotero-context-pane-sidenav" ||
+    id === "zotero-view-item-sidenav" ||
+    id === "zotero-item-pane-sidenav" ||
+    localName === "sidenav" ||
+    /\bzotero-(context-pane|view-item|item-pane)-sidenav\b/.test(className)
+  );
 }
 
 function removeEmptyRail(doc: Document): void {
