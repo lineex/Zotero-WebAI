@@ -4007,6 +4007,9 @@ function serializeMarkdownNode(node: Node, listDepth: number): string {
   if (tag === "br") {
     return "\n";
   }
+  if (tag === "img") {
+    return serializeImageMarkdown(element);
+  }
   if (tag === "ul" || tag === "ol") {
     return serializeListMarkdown(element, tag === "ol", listDepth);
   }
@@ -4070,7 +4073,7 @@ function isMarkdownBlockNode(node: Node): boolean {
     return true;
   }
   const tag = (node as Element).tagName.toLowerCase();
-  return /^(h[1-6]|p|ul|ol|li|table|blockquote|pre|section|article)$/.test(tag);
+  return /^(h[1-6]|p|ul|ol|li|table|blockquote|pre|section|article|img)$/.test(tag);
 }
 
 function serializeListMarkdown(
@@ -4203,6 +4206,9 @@ function serializeInlineMarkdownNode(node: Node): string {
   if (tag === "br") {
     return "\n";
   }
+  if (tag === "img") {
+    return serializeImageMarkdown(element);
+  }
   if (tag === "strong" || tag === "b") {
     const text = serializeInlineMarkdown(element);
     return text ? `**${text}**` : "";
@@ -4226,6 +4232,46 @@ function serializeInlineMarkdownNode(node: Node): string {
   return getElementChildNodes(element)
     .map((child) => serializeInlineMarkdownNode(child))
     .join("");
+}
+
+function serializeImageMarkdown(element: Element): string {
+  const image = element as HTMLImageElement;
+  const src = (
+    image.currentSrc ||
+    image.src ||
+    element.getAttribute("src") ||
+    element.getAttribute("data-src") ||
+    ""
+  ).trim();
+  if (!isRenderableImageURL(src)) {
+    return "";
+  }
+  const alt = escapeMarkdownImageText(
+    element.getAttribute("alt") ||
+      element.getAttribute("aria-label") ||
+      element.getAttribute("title") ||
+      "image",
+  );
+  return `![${alt}](${escapeMarkdownImageURL(src)})`;
+}
+
+function isRenderableImageURL(value: string): boolean {
+  const url = String(value || "").trim();
+  return /^(?:https?:|data:image\/|blob:|file:|zotero:|\/\/)/i.test(url);
+}
+
+function escapeMarkdownImageText(value: string): string {
+  return normalizeInlineMarkdownText(value)
+    .replace(/[[\]\r\n]/g, " ")
+    .replace(/\s{2,}/g, " ")
+    .trim();
+}
+
+function escapeMarkdownImageURL(value: string): string {
+  return String(value || "")
+    .trim()
+    .replace(/\(/g, "%28")
+    .replace(/\)/g, "%29");
 }
 
 function getElementChildNodes(element: Element): Node[] {
@@ -5496,6 +5542,10 @@ ${serializeListItemMarkdown.toString()}
 ${serializeTableMarkdown.toString()}
 ${serializeInlineMarkdown.toString()}
 ${serializeInlineMarkdownNode.toString()}
+${serializeImageMarkdown.toString()}
+${isRenderableImageURL.toString()}
+${escapeMarkdownImageText.toString()}
+${escapeMarkdownImageURL.toString()}
 ${getElementChildNodes.toString()}
 ${getElementChildren.toString()}
 ${normalizeInlineMarkdownText.toString()}
@@ -8102,7 +8152,7 @@ function renderInlineMarkdown(
 ): React.ReactNode[] {
   const nodes: React.ReactNode[] = [];
   const tokenPattern =
-    /(\$\$[\s\S]+?\$\$|`[^`\n]+`|\*\*[\s\S]+?\*\*|\*[^*\n]+?\*|\[[^\]\n]+\]\([^)]+\))/g;
+    /(\$\$[\s\S]+?\$\$|!\[[^\]\n]*\]\([^)]+\)|`[^`\n]+`|\*\*[\s\S]+?\*\*|\*[^*\n]+?\*|\[[^\]\n]+\]\([^)]+\))/g;
   const appendPlain = (plain: string) => {
     if (!plain) {
       return;
@@ -8141,6 +8191,29 @@ function renderInlineMarkdown(
           {token}
         </code>,
       );
+    } else if (token.startsWith("![")) {
+      const imageMatch = token.match(/^!\[([^\]\n]*)\]\(([^)]+)\)$/);
+      const label = imageMatch?.[1] || "image";
+      const url = imageMatch?.[2] || "";
+      if (isRenderableImageURL(url)) {
+        nodes.push(
+          <a
+            href={url}
+            key={key}
+            onClick={(event) => {
+              event.preventDefault();
+              openExternalURL(url);
+            }}
+            rel="noreferrer"
+            style={styles.markdownImageLink}
+            title={label}
+          >
+            <img alt={label} src={url} style={styles.markdownImage} />
+          </a>,
+        );
+      } else {
+        appendPlain(label);
+      }
     } else if (token.startsWith("`")) {
       nodes.push(
         <code
@@ -8831,6 +8904,19 @@ const styles: Record<string, React.CSSProperties> = {
     fontSize: "0.94em",
     padding: "1px 4px",
     whiteSpace: "break-spaces",
+  },
+  markdownImageLink: {
+    display: "block",
+    margin: "6px 0",
+    maxWidth: "100%",
+  },
+  markdownImage: {
+    borderRadius: "6px",
+    display: "block",
+    height: "auto",
+    maxHeight: "520px",
+    maxWidth: "100%",
+    objectFit: "contain",
   },
   markdownLink: {
     cursor: "pointer",
