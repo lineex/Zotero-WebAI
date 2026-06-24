@@ -2627,7 +2627,7 @@ function insertPromptWithFrameScript(
     const timeoutId = timerHost.setTimeout(() => {
       cleanup();
       resolve({ ok: false, reason: "frame-script-timeout" });
-    }, submit ? 20000 : 1800);
+    }, submit ? 45000 : 1800);
 
     const finish = (result: PromptInsertResult) => {
       timerHost.clearTimeout(timeoutId);
@@ -3732,44 +3732,61 @@ async function submitWebChatPrompt(
   doc: Document,
   composer: HTMLElement,
 ): Promise<boolean> {
+  focusComposerForSubmit(composer);
   const fingerprint = createPromptFingerprint(getComposerText(composer));
-  const delays = [80, 120, 180, 260, 360, 520, 760, 1000, 1300];
+  const delays = [80, 120, 180, 260, 360, 520, 760, 1000, 1300, 1800];
   for (const delay of delays) {
     await sleepInDocument(doc, delay);
-    dispatchComposerEvents(composer, getComposerText(composer));
+    const activeComposer = findWebChatComposer(doc) || composer;
+    focusComposerForSubmit(activeComposer);
+    dispatchComposerEvents(activeComposer, getComposerText(activeComposer));
 
-    const submitButtons = findWebChatSubmitButtons(doc, composer);
-    for (const submitButton of submitButtons.slice(0, 8)) {
-      clickSubmitButton(submitButton);
-      if (await waitForPromptSubmitted(doc, composer, fingerprint, 520)) {
+    if (dispatchEnterToComposer(doc, activeComposer)) {
+      if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 900)) {
         return true;
       }
-      const clickableParent = findClickableAncestor(submitButton, composer);
+    }
+
+    const submitButtons = findWebChatSubmitButtons(doc, activeComposer);
+    for (const submitButton of submitButtons.slice(0, 14)) {
+      clickSubmitButton(submitButton);
+      if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 620)) {
+        return true;
+      }
+      const clickableParent = findClickableAncestor(submitButton, activeComposer);
       if (clickableParent && clickableParent !== submitButton) {
         clickSubmitButton(clickableParent);
-        if (await waitForPromptSubmitted(doc, composer, fingerprint, 520)) {
+        if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 620)) {
+          return true;
+        }
+      }
+      const clickableChild = findClickableDescendant(submitButton);
+      if (clickableChild && clickableChild !== submitButton) {
+        clickSubmitButton(clickableChild);
+        if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 620)) {
           return true;
         }
       }
     }
 
-    if (dispatchEnterToComposer(doc, composer)) {
-      if (await waitForPromptSubmitted(doc, composer, fingerprint, 620)) {
+    if (clickComposerSubmitHotspots(doc, activeComposer)) {
+      if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 720)) {
         return true;
       }
     }
-    if (dispatchModifiedEnterToComposer(doc, composer, "ctrl")) {
-      if (await waitForPromptSubmitted(doc, composer, fingerprint, 420)) {
+
+    if (dispatchModifiedEnterToComposer(doc, activeComposer, "ctrl")) {
+      if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 520)) {
         return true;
       }
     }
-    if (dispatchModifiedEnterToComposer(doc, composer, "meta")) {
-      if (await waitForPromptSubmitted(doc, composer, fingerprint, 420)) {
+    if (dispatchModifiedEnterToComposer(doc, activeComposer, "meta")) {
+      if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 520)) {
         return true;
       }
     }
-    if (submitNearestComposerForm(composer)) {
-      if (await waitForPromptSubmitted(doc, composer, fingerprint, 620)) {
+    if (submitNearestComposerForm(activeComposer)) {
+      if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 720)) {
         return true;
       }
     }
@@ -3782,23 +3799,25 @@ function findWebChatSubmitButtons(
   doc: Document,
   composer: HTMLElement,
 ): HTMLElement[] {
-  const buttons = queryElementsDeep(
-    doc,
-    [
-      "button",
-      "[role='button']",
-      "[aria-label]",
-      "[title]",
-      "[data-testid]",
-      "[data-test]",
-      "[data-qa]",
-      "[class*='send']",
-      "[class*='Send']",
-      "[class*='submit']",
-      "[class*='Submit']",
-    ].join(","),
+  const selector = [
+    "button",
+    "[role='button']",
+    "[aria-label]",
+    "[title]",
+    "[data-testid]",
+    "[data-test]",
+    "[data-qa]",
+    "[class*='send']",
+    "[class*='Send']",
+    "[class*='submit']",
+    "[class*='Submit']",
+  ].join(",");
+  const scopedButtons = getSubmitCandidateContainers(composer).flatMap((container) =>
+    queryElementsDeep(container, selector),
   );
+  const buttons = [...scopedButtons, ...queryElementsDeep(doc, selector)];
   const visibleButtons = buttons
+    .filter((button, index, list) => list.indexOf(button) === index)
     .filter((button) => isVisibleSubmitCandidate(button, composer))
     .sort(
       (left, right) =>
@@ -3899,6 +3918,37 @@ function scoreSubmitCandidate(
   return score;
 }
 
+function getSubmitCandidateContainers(composer: HTMLElement): HTMLElement[] {
+  const containers: HTMLElement[] = [composer];
+  let current = composer.parentElement as HTMLElement | null;
+  let depth = 0;
+  while (current && depth < 7) {
+    depth += 1;
+    containers.push(current);
+    const rect = current.getBoundingClientRect();
+    const label = [
+      current.getAttribute("role"),
+      current.getAttribute("aria-label"),
+      current.getAttribute("data-testid"),
+      current.getAttribute("data-test"),
+      current.getAttribute("class"),
+    ]
+      .join(" ")
+      .toLowerCase();
+    if (
+      current.tagName.toLowerCase() === "form" ||
+      current.getAttribute("role") === "form" ||
+      (rect.width >= 260 &&
+        rect.height >= 48 &&
+        /(composer|prompt|chat|input|textarea|message|search|form)/i.test(label))
+    ) {
+      break;
+    }
+    current = current.parentElement as HTMLElement | null;
+  }
+  return Array.from(new Set(containers));
+}
+
 function queryElementsDeep(
   root: Document | Element | ShadowRoot,
   selector: string,
@@ -3928,6 +3978,39 @@ function queryElementsDeep(
   return Array.from(new Set(results));
 }
 
+function focusComposerForSubmit(composer: HTMLElement): void {
+  const doc = composer.ownerDocument;
+  if (!doc) {
+    return;
+  }
+  try {
+    composer.focus();
+  } catch {
+    // Focus can fail while the embedded page is navigating.
+  }
+  const tagName = composer.tagName.toLowerCase();
+  if (tagName === "textarea" || tagName === "input") {
+    const input = composer as HTMLTextAreaElement | HTMLInputElement;
+    try {
+      const textLength = String(input.value || "").length;
+      input.setSelectionRange(textLength, textLength);
+    } catch {
+      // Some inputs reject selection updates.
+    }
+    return;
+  }
+  try {
+    const selection = doc.defaultView?.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(composer);
+    range.collapse(false);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  } catch {
+    // Contenteditable selections are best effort.
+  }
+}
+
 function clickSubmitButton(element: HTMLElement): void {
   const doc = element.ownerDocument;
   if (!doc) {
@@ -3935,36 +4018,228 @@ function clickSubmitButton(element: HTMLElement): void {
     return;
   }
   const win = doc.defaultView;
-  element.focus?.();
-  const eventOptions = {
-    bubbles: true,
-    cancelable: true,
-    view: win || undefined,
-  };
+  const center = getElementCenter(element);
   try {
-    element.dispatchEvent(
-      new (win?.MouseEvent || MouseEvent)("pointerdown", eventOptions),
-    );
+    element.scrollIntoView?.({ block: "nearest", inline: "nearest" });
   } catch {
-    // Pointer-style events are best effort in embedded pages.
+    // Some embedded pages reject scrollIntoView options.
   }
   try {
-    element.dispatchEvent(
-      new (win?.MouseEvent || MouseEvent)("mousedown", eventOptions),
-    );
-    element.dispatchEvent(
-      new (win?.MouseEvent || MouseEvent)("mouseup", eventOptions),
-    );
-    element.dispatchEvent(
-      new (win?.MouseEvent || MouseEvent)("click", eventOptions),
-    );
+    element.focus?.();
   } catch {
+    // Not every clickable element is focusable.
+  }
+  if (sendNativeMouseClick(doc, center.x, center.y)) {
+    return;
+  }
+  dispatchPointerMouseSequence(element, center);
+  try {
     element.click();
+  } catch {
+    // Synthetic clicks are a final fallback.
   }
 }
 
+function getElementCenter(element: HTMLElement): { x: number; y: number } {
+  const rect = element.getBoundingClientRect();
+  return {
+    x: rect.left + Math.max(1, rect.width / 2),
+    y: rect.top + Math.max(1, rect.height / 2),
+  };
+}
+
+function getWindowUtils(doc: Document): {
+  sendKeyEvent?: (
+    type: string,
+    keyCode: number,
+    charCode: number,
+    modifiers: number,
+    flags?: number,
+  ) => void;
+  sendMouseEvent?: (
+    type: string,
+    x: number,
+    y: number,
+    button: number,
+    clickCount: number,
+    modifiers: number,
+  ) => void;
+} | null {
+  const win = doc.defaultView as
+    | (Window & {
+        QueryInterface?: (interfaceType: unknown) => {
+          getInterface?: (interfaceType: unknown) => unknown;
+        };
+        windowUtils?: {
+          sendKeyEvent?: (
+            type: string,
+            keyCode: number,
+            charCode: number,
+            modifiers: number,
+            flags?: number,
+          ) => void;
+          sendMouseEvent?: (
+            type: string,
+            x: number,
+            y: number,
+            button: number,
+            clickCount: number,
+            modifiers: number,
+          ) => void;
+        };
+      })
+    | null;
+  if (!win) {
+    return null;
+  }
+  if (win.windowUtils) {
+    return win.windowUtils;
+  }
+  try {
+    const components = (globalThis as unknown as { Components?: typeof Components })
+      .Components;
+    const interfaces = components?.interfaces;
+    if (
+      interfaces?.nsIInterfaceRequestor &&
+      interfaces.nsIDOMWindowUtils &&
+      typeof win.QueryInterface === "function"
+    ) {
+      const requestor = win.QueryInterface(interfaces.nsIInterfaceRequestor);
+      const utils = requestor.getInterface?.(interfaces.nsIDOMWindowUtils);
+      return (utils || null) as ReturnType<typeof getWindowUtils>;
+    }
+  } catch {
+    // nsIDOMWindowUtils is available only from privileged Zotero contexts.
+  }
+  return null;
+}
+
+function sendNativeMouseClick(doc: Document, x: number, y: number): boolean {
+  const utils = getWindowUtils(doc);
+  if (!utils || typeof utils.sendMouseEvent !== "function") {
+    return false;
+  }
+  const clientX = Math.max(1, Math.round(x));
+  const clientY = Math.max(1, Math.round(y));
+  try {
+    utils.sendMouseEvent("mousemove", clientX, clientY, 0, 0, 0);
+    utils.sendMouseEvent("mousedown", clientX, clientY, 0, 1, 0);
+    utils.sendMouseEvent("mouseup", clientX, clientY, 0, 1, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function sendNativeEnter(doc: Document): boolean {
+  const utils = getWindowUtils(doc);
+  if (!utils || typeof utils.sendKeyEvent !== "function") {
+    return false;
+  }
+  try {
+    utils.sendKeyEvent("keydown", 13, 0, 0);
+    utils.sendKeyEvent("keypress", 13, 13, 0);
+    utils.sendKeyEvent("keyup", 13, 0, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function clickComposerSubmitHotspots(doc: Document, composer: HTMLElement): boolean {
+  const containers = getSubmitCandidateContainers(composer);
+  const rects = Array.from(new Set([composer, ...containers]))
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width >= 80 && rect.height >= 24);
+  const points: Array<{ x: number; y: number }> = [];
+  rects.forEach((rect) => {
+    const rightInset = Math.min(42, Math.max(18, rect.width * 0.08));
+    const bottomInset = Math.min(42, Math.max(18, rect.height * 0.28));
+    points.push(
+      { x: rect.right - rightInset, y: rect.bottom - bottomInset },
+      { x: rect.right - rightInset, y: rect.top + rect.height / 2 },
+      { x: rect.right - rightInset * 0.75, y: rect.bottom - 28 },
+    );
+  });
+  let attempted = false;
+  points.forEach((point) => {
+    const x = Math.max(1, Math.round(point.x));
+    const y = Math.max(1, Math.round(point.y));
+    const target = doc.elementFromPoint(x, y) as HTMLElement | null;
+    if (target && typeof target.getBoundingClientRect === "function") {
+      attempted = true;
+      const clickableAncestor = findClickableAncestor(target, composer);
+      clickSubmitButton(clickableAncestor || target);
+      return;
+    }
+    attempted = sendNativeMouseClick(doc, x, y) || attempted;
+  });
+  return attempted;
+}
+
+function dispatchPointerMouseSequence(
+  element: HTMLElement,
+  center: { x: number; y: number },
+): void {
+  const doc = element.ownerDocument;
+  if (!doc) {
+    return;
+  }
+  const win = doc.defaultView;
+  const mouseOptions: MouseEventInit = {
+    bubbles: true,
+    button: 0,
+    buttons: 1,
+    cancelable: true,
+    clientX: center.x,
+    clientY: center.y,
+    screenX: center.x,
+    screenY: center.y,
+    view: win || undefined,
+  };
+  const pointerOptions: PointerEventInit = {
+    ...mouseOptions,
+    isPrimary: true,
+    pointerId: 1,
+    pointerType: "mouse",
+  };
+  const pointerCtor = win?.PointerEvent || PointerEvent;
+  const mouseCtor = win?.MouseEvent || MouseEvent;
+  const dispatch = (
+    target: HTMLElement,
+    type: string,
+    ctor: typeof MouseEvent | typeof PointerEvent,
+    options: MouseEventInit | PointerEventInit,
+  ) => {
+    try {
+      target.dispatchEvent(new ctor(type, options));
+    } catch {
+      target.dispatchEvent(new mouseCtor(type, mouseOptions));
+    }
+  };
+  ["pointerover", "pointerenter", "pointermove", "pointerdown"].forEach((type) =>
+    dispatch(element, type, pointerCtor, pointerOptions),
+  );
+  ["mouseover", "mouseenter", "mousemove", "mousedown"].forEach((type) =>
+    dispatch(element, type, mouseCtor, mouseOptions),
+  );
+  ["pointerup", "mouseup", "click"].forEach((type) =>
+    dispatch(
+      element,
+      type,
+      type.startsWith("pointer") ? pointerCtor : mouseCtor,
+      type.startsWith("pointer")
+        ? { ...pointerOptions, buttons: 0 }
+        : { ...mouseOptions, buttons: 0 },
+    ),
+  );
+}
+
 function dispatchEnterToComposer(doc: Document, composer: HTMLElement): boolean {
-  return dispatchKeyboardSubmitToComposer(doc, composer, {});
+  focusComposerForSubmit(composer);
+  const nativeSubmitted = sendNativeEnter(doc);
+  const domSubmitted = dispatchKeyboardSubmitToComposer(doc, composer, {});
+  return nativeSubmitted || domSubmitted;
 }
 
 function dispatchModifiedEnterToComposer(
@@ -4058,6 +4333,18 @@ function findClickableAncestor(
     current = current.parentElement as HTMLElement | null;
   }
   return null;
+}
+
+function findClickableDescendant(element: HTMLElement): HTMLElement | null {
+  const descendants = Array.from(
+    element.querySelectorAll(
+      "button,[role='button'],svg,[aria-label],[title],[data-testid],[data-test],[data-qa]",
+    ),
+  ) as HTMLElement[];
+  return descendants.find((candidate) => {
+    const rect = candidate.getBoundingClientRect();
+    return rect.width >= 12 && rect.height >= 12;
+  }) || null;
 }
 
 function getComposerText(element: HTMLElement): string {
@@ -4288,12 +4575,21 @@ ${findWebChatSubmitButtons.toString()}
 ${queryElementsDeep.toString()}
 ${isVisibleSubmitCandidate.toString()}
 ${scoreSubmitCandidate.toString()}
+${getSubmitCandidateContainers.toString()}
+${focusComposerForSubmit.toString()}
 ${clickSubmitButton.toString()}
+${getElementCenter.toString()}
+${getWindowUtils.toString()}
+${sendNativeMouseClick.toString()}
+${sendNativeEnter.toString()}
+${clickComposerSubmitHotspots.toString()}
+${dispatchPointerMouseSequence.toString()}
 ${dispatchEnterToComposer.toString()}
 ${dispatchModifiedEnterToComposer.toString()}
 ${dispatchKeyboardSubmitToComposer.toString()}
 ${submitNearestComposerForm.toString()}
 ${findClickableAncestor.toString()}
+${findClickableDescendant.toString()}
 ${getComposerText.toString()}
 ${normalizeComposerProbeText.toString()}
 ${createPromptFingerprint.toString()}
