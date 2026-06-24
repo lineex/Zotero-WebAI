@@ -166,6 +166,12 @@ interface SessionSlashCommand {
   scope: SessionSlashScope;
 }
 
+interface ComposerImageAttachment {
+  dataURL: string;
+  name: string;
+  type: string;
+}
+
 type MarkdownExportResult =
   | { status: "cancelled" }
   | { status: "copied" }
@@ -254,6 +260,7 @@ interface WebAIStrings {
     external: string;
     hide: string;
     hideWeb: string;
+    image: string;
     loginMode: string;
     loginWindow: string;
     next: string;
@@ -325,6 +332,8 @@ interface WebAIStrings {
     displayRestored: (serviceLabel: string) => string;
     editPrompt: string;
     failed: (message: string) => string;
+    imageAttached: (name: string) => string;
+    imageRemoved: string;
     incomingReady: (label: string, serviceLabel: string) => string;
     loaded: (serviceLabel: string) => string;
     loadedSession: (title: string) => string;
@@ -369,6 +378,7 @@ const EN_STRINGS: WebAIStrings = {
     external: "External",
     hide: "Hide",
     hideWeb: "Hide Web",
+    image: "Image",
     loginMode: "Login Mode",
     loginWindow: "Login Window",
     next: "Next",
@@ -445,6 +455,8 @@ const EN_STRINGS: WebAIStrings = {
     displayRestored: (serviceLabel) => `${serviceLabel} display restored.`,
     editPrompt: "Edit the user prompt in place, then save to generate a new answer.",
     failed: (message) => `Failed: ${message}`,
+    imageAttached: (name) => `Attached image: ${name}.`,
+    imageRemoved: "Image attachment removed.",
     incomingReady: (label, serviceLabel) =>
       `${label} is ready. Send inserts it into ${serviceLabel}.`,
     loaded: (serviceLabel) =>
@@ -502,6 +514,7 @@ const ZH_STRINGS: WebAIStrings = {
     external: "外部打开",
     hide: "隐藏",
     hideWeb: "隐藏网页",
+    image: "图片",
     loginMode: "登录模式",
     loginWindow: "登录窗口",
     next: "下一条",
@@ -576,6 +589,8 @@ const ZH_STRINGS: WebAIStrings = {
     displayRestored: (serviceLabel) => `${serviceLabel} 网页已恢复显示。`,
     editPrompt: "直接修改用户提示词，保存后会生成新的结果。",
     failed: (message) => `失败：${message}`,
+    imageAttached: (name) => `已添加图片：${name}。`,
+    imageRemoved: "已移除图片附件。",
     incomingReady: (label, serviceLabel) =>
       `${label} 已准备好，发送后会插入 ${serviceLabel}。`,
     loaded: (serviceLabel) =>
@@ -767,6 +782,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
   const [status, setStatus] = useState(() => text.status.loaded(SERVICES[0].label));
   const [isError, setIsError] = useState(false);
   const [message, setMessage] = useState("");
+  const [composerImage, setComposerImage] =
+    useState<ComposerImageAttachment | null>(null);
   const [selectedSkillID, setSelectedSkillID] = useState<string | null>(null);
   const [editingTurnID, setEditingTurnID] = useState<string | null>(null);
   const [editingPrompt, setEditingPrompt] = useState("");
@@ -792,6 +809,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     () => INITIAL_CHAT_SESSIONS[0]?.records.find((record) => !record.hidden)?.id || null,
   );
   const executionRecordsRef = useRef<WebAIExecutionRecord[]>(executionRecords);
+  const composerImageInputRef = useRef<HTMLInputElement>(null);
   const frameHostRef = useRef<HTMLDivElement>(null);
   const frameRef = useRef<Element | null>(null);
   const transcriptRef = useRef<HTMLDivElement>(null);
@@ -935,6 +953,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setTurnVersionSelections({});
     setSelectedSkillID(null);
     setMessage("");
+    setComposerImage(null);
     resetConversationRuntime();
     setStatus(text.status.clearedSession);
     setIsError(false);
@@ -952,6 +971,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setTurnVersionSelections({});
     setSelectedSkillID(null);
     setMessage("");
+    setComposerImage(null);
     resetConversationRuntime();
     setStatus(text.status.clearedAllSessions);
     setIsError(false);
@@ -1032,6 +1052,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     }
 
     setMessage(incomingPrompt.prompt);
+    setComposerImage(null);
     setSelectedSkillID(null);
     setStatus(text.status.incomingReady(incomingPrompt.label, service.label));
     setIsError(false);
@@ -1237,12 +1258,18 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     prompt: string,
     statusPrefix?: string | null,
     captureOptions?: AssistantReplyRecordOptions,
+    attachments: ComposerImageAttachment[] = [],
   ) => {
     const baselineText = await readLatestAssistantText(frameRef.current)
       .then((result) => (result.ok ? result.text || "" : ""))
       .catch(() => "");
     copyTextToClipboard(prompt);
-    const result = await insertPromptIntoWebChat(frameRef.current, prompt, true);
+    const result = await insertPromptIntoWebChat(
+      frameRef.current,
+      prompt,
+      true,
+      attachments,
+    );
     focusFrame(frameRef.current);
     const nextCaptureOptions = {
       ...captureOptions,
@@ -1383,6 +1410,34 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setIsError(false);
   };
 
+  const selectComposerImage = () => {
+    composerImageInputRef.current?.click();
+  };
+
+  const handleComposerImageChange = async (
+    event: React.ChangeEvent<HTMLInputElement>,
+  ) => {
+    const file = event.target.files?.[0] || null;
+    event.target.value = "";
+    if (!file) {
+      return;
+    }
+    const dataURL = await readFileAsDataURL(file);
+    setComposerImage({
+      dataURL,
+      name: file.name || "image",
+      type: file.type || parseDataURLMimeType(dataURL) || "image/png",
+    });
+    setStatus(text.status.imageAttached(file.name || "image"));
+    setIsError(false);
+  };
+
+  const removeComposerImage = () => {
+    setComposerImage(null);
+    setStatus(text.status.imageRemoved);
+    setIsError(false);
+  };
+
   const runSessionSlashCommand = async (command: SessionSlashCommand) => {
     if (command.action === "clear") {
       if (command.scope === "all") {
@@ -1455,6 +1510,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     const sessionCommand = getSessionSlashCommand(skill);
     if (sessionCommand) {
       setMessage("");
+      setComposerImage(null);
       setSelectedSkillID(null);
       void runAction(() => runSessionSlashCommand(sessionCommand));
       return;
@@ -1509,6 +1565,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       serviceLabel: service.label,
     });
     setMessage("");
+    setComposerImage(null);
     setSelectedSkillID(null);
     setActiveSessionID(session.id);
     setExecutionRecords([]);
@@ -1528,15 +1585,16 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     overrideTurnID?: string,
   ) => {
     const isComposerSend = typeof overrideMessage !== "string";
-    const draftMessage = isComposerSend ? message : overrideMessage;
+    const imageAttachment = isComposerSend ? composerImage : null;
+    const rawMessage = isComposerSend ? message : overrideMessage;
     const skillForResolution = isComposerSend ? selectedSkill : null;
-    if (isNewConversationCommand(draftMessage)) {
+    if (isNewConversationCommand(rawMessage)) {
       startNewConversation();
       return;
     }
 
     const resolved = resolveSkillFromMessage(
-      draftMessage,
+      rawMessage,
       slashCommands,
       skillForResolution,
     );
@@ -1548,6 +1606,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     if (sessionCommand) {
       if (isComposerSend) {
         setMessage("");
+        setComposerImage(null);
       }
       setSelectedSkillID(null);
       setEditingTurnID(null);
@@ -1555,11 +1614,12 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
       await runSessionSlashCommand(sessionCommand);
       return;
     }
-    if (!resolved.skill && !resolved.message.trim()) {
+    if (!resolved.skill && !resolved.message.trim() && !imageAttachment) {
       throw new Error(text.errors.noMessageOrCommand);
     }
     if (isComposerSend) {
       setMessage("");
+      setComposerImage(null);
     }
     setSelectedSkillID(null);
     setEditingTurnID(null);
@@ -1568,15 +1628,14 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     const isPDFCommand = resolved.skill?.kind === "pdf";
     const isWebSearchCommand = resolved.skill?.kind === "web";
     const turnID = overrideTurnID || createTurnID();
-    const userPrompt = buildRecordUserPrompt(
-      draftMessage,
-      resolved.message,
-      resolved.skill,
+    const userPrompt = appendComposerImageToMessage(
+      buildRecordUserPrompt(rawMessage, resolved.message, resolved.skill),
+      imageAttachment,
     );
 
     const promptInput = {
       contextSummary,
-      message: resolved.message,
+      message: getMessageForPrompt(resolved.message, imageAttachment, text),
       scope,
       selectedSkill: resolved.skill,
     };
@@ -1675,6 +1734,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         turnID,
         userPrompt,
       },
+      imageAttachment ? [imageAttachment] : [],
     );
   };
 
@@ -2468,6 +2528,49 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           value={message}
         />
 
+        <input
+          accept="image/*"
+          onChange={(event) => void runAction(() => handleComposerImageChange(event))}
+          ref={composerImageInputRef}
+          style={styles.hiddenFileInput}
+          type="file"
+        />
+
+        {composerImage && (
+          <div
+            style={{
+              ...styles.composerImagePreview,
+              background: theme.inputBackground,
+              borderColor: theme.softBorder,
+            }}
+          >
+            <img
+              alt={composerImage.name}
+              src={composerImage.dataURL}
+              style={styles.composerImageThumb}
+            />
+            <span
+              style={{
+                ...styles.composerImageName,
+                color: theme.text,
+              }}
+            >
+              {composerImage.name}
+            </span>
+            <button
+              style={{
+                ...styles.inlineActionButton,
+                borderColor: theme.buttonBorder,
+                color: theme.buttonText,
+              }}
+              onClick={removeComposerImage}
+              type="button"
+            >
+              {text.buttons.clear}
+            </button>
+          </div>
+        )}
+
         <div style={styles.composerFooter}>
           <div
             style={{
@@ -2477,6 +2580,17 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           >
             {status || text.defaultStatus}
           </div>
+          <button
+            style={{
+              ...styles.inlineActionButton,
+              borderColor: composerImage ? theme.badgeBorder : theme.buttonBorder,
+              color: composerImage ? theme.badgeText : theme.buttonText,
+            }}
+            onClick={selectComposerImage}
+            type="button"
+          >
+            {text.buttons.image}
+          </button>
           <button
             style={{
               ...styles.sendButton,
@@ -2555,6 +2669,28 @@ function getSessionSlashCommand(
         ? "all"
         : "current",
   };
+}
+
+function appendComposerImageToMessage(
+  value: string,
+  image: ComposerImageAttachment | null,
+): string {
+  if (!image) {
+    return value;
+  }
+  const imageMarkdown = `![${escapeMarkdownImageText(image.name)}](${escapeMarkdownImageURL(image.dataURL)})`;
+  return [value.trim(), imageMarkdown].filter(Boolean).join("\n\n");
+}
+
+function getMessageForPrompt(
+  value: string,
+  image: ComposerImageAttachment | null,
+  text: WebAIStrings,
+): string {
+  if (value.trim() || !image) {
+    return value;
+  }
+  return text === ZH_STRINGS ? "请分析这张图片。" : "Please analyze this image.";
 }
 
 function buildRecordUserPrompt(
@@ -2789,15 +2925,21 @@ async function insertPromptIntoWebChat(
   frame: Element | null,
   prompt: string,
   submit = false,
+  attachments: ComposerImageAttachment[] = [],
 ): Promise<PromptInsertResult> {
   if (!frame) {
     return { ok: false, reason: "web-frame-missing" };
   }
 
-  const directResult = await insertPromptDirectly(frame, prompt, submit);
+  const directResult = await insertPromptDirectly(frame, prompt, submit, attachments);
   if (directResult.ok) {
     if (submit && !directResult.submitted) {
-      const scriptedResult = await insertPromptWithFrameScript(frame, prompt, submit);
+      const scriptedResult = await insertPromptWithFrameScript(
+        frame,
+        prompt,
+        submit,
+        attachments,
+      );
       if (scriptedResult.ok && scriptedResult.submitted) {
         return scriptedResult;
       }
@@ -2815,7 +2957,12 @@ async function insertPromptIntoWebChat(
     return directResult;
   }
 
-  const scriptedResult = await insertPromptWithFrameScript(frame, prompt, submit);
+  const scriptedResult = await insertPromptWithFrameScript(
+    frame,
+    prompt,
+    submit,
+    attachments,
+  );
   if (submit && (!scriptedResult.ok || !scriptedResult.submitted)) {
     const hostKeyboardResult = await submitFocusedWebChatWithHostKeyboard(
       frame,
@@ -2866,13 +3013,20 @@ function insertPromptDirectly(
   frame: Element,
   prompt: string,
   submit: boolean,
+  attachments: ComposerImageAttachment[],
 ): Promise<PromptInsertResult> {
   try {
     const doc = (frame as HTMLIFrameElement).contentWindow?.document;
     if (!doc) {
       return Promise.resolve({ ok: false, reason: "content-document-missing" });
     }
-    return insertPromptIntoDocument(doc, prompt, "direct-dom", submit);
+    return insertPromptIntoDocument(
+      doc,
+      prompt,
+      "direct-dom",
+      submit,
+      attachments,
+    );
   } catch (error) {
     return Promise.resolve({
       ok: false,
@@ -2888,6 +3042,7 @@ function insertPromptWithFrameScript(
   frame: Element,
   prompt: string,
   submit: boolean,
+  attachments: ComposerImageAttachment[],
 ): Promise<PromptInsertResult> {
   const messageManager = getFrameMessageManager(frame);
   const addMessageListener = messageManager?.addMessageListener;
@@ -2903,7 +3058,12 @@ function insertPromptWithFrameScript(
   const messageName = `ZoteroWebAI:PromptInsert:${Date.now()}:${Math.random()
     .toString(36)
     .slice(2)}`;
-  const source = buildPromptInsertFrameScript(messageName, prompt, submit);
+  const source = buildPromptInsertFrameScript(
+    messageName,
+    prompt,
+    submit,
+    attachments,
+  );
 
   return new Promise((resolve) => {
     const timerHost = resolveTimerHost();
@@ -3230,15 +3390,17 @@ function buildPromptInsertFrameScript(
   messageName: string,
   prompt: string,
   submit: boolean,
+  attachments: ComposerImageAttachment[],
 ): string {
   return `
 (async function () {
   const messageName = ${JSON.stringify(messageName)};
   const prompt = ${JSON.stringify(prompt)};
   const submit = ${JSON.stringify(submit)};
+  const attachments = ${JSON.stringify(attachments)};
   ${insertPromptIntoDocumentSource()}
   try {
-    const result = await insertPromptIntoDocument(content.document, prompt, "frame-script", submit);
+    const result = await insertPromptIntoDocument(content.document, prompt, "frame-script", submit, attachments);
     sendAsyncMessage(messageName, result);
   } catch (error) {
     sendAsyncMessage(messageName, {
@@ -3295,6 +3457,7 @@ async function insertPromptIntoDocument(
   prompt: string,
   method: string,
   submit = false,
+  attachments: ComposerImageAttachment[] = [],
 ): Promise<PromptInsertResult> {
   const composer = findWebChatComposer(doc);
   if (!composer) {
@@ -3302,7 +3465,12 @@ async function insertPromptIntoDocument(
   }
   writePromptToComposer(composer, prompt);
   await waitForPromptHydration(doc, composer, prompt);
-  const submitted = submit ? await submitWebChatPrompt(doc, composer, prompt) : false;
+  if (attachments.length) {
+    await attachImagesToWebChatComposer(doc, composer, attachments);
+  }
+  const submitted = submit
+    ? await submitWebChatPrompt(doc, composer, prompt, attachments.length > 0)
+    : false;
   return {
     ok: true,
     method,
@@ -4367,17 +4535,23 @@ async function submitWebChatPrompt(
   doc: Document,
   composer: HTMLElement,
   prompt: string,
+  preserveComposerAttachments = false,
 ): Promise<boolean> {
   focusComposerForSubmit(composer);
   const fingerprint = createPromptFingerprint(prompt || getComposerText(composer));
-  if (await submitComposerWithPasteAndEnter(doc, composer, prompt, fingerprint)) {
+  if (
+    !preserveComposerAttachments &&
+    (await submitComposerWithPasteAndEnter(doc, composer, prompt, fingerprint))
+  ) {
     return true;
   }
   const delays = [80, 120, 180, 260, 360, 520, 760, 1000, 1300, 1800];
   for (const delay of delays) {
     await sleepInDocument(doc, delay);
     const activeComposer = findWebChatComposer(doc) || composer;
-    ensureComposerContainsPrompt(activeComposer, prompt, fingerprint);
+    if (!preserveComposerAttachments) {
+      ensureComposerContainsPrompt(activeComposer, prompt, fingerprint);
+    }
     focusComposerForSubmit(activeComposer);
     dispatchComposerEvents(activeComposer, getComposerText(activeComposer));
 
@@ -4548,6 +4722,134 @@ function selectComposerContents(doc: Document, composer: HTMLElement): void {
   } catch {
     // Best effort; writePromptToComposer will still replace the value.
   }
+}
+
+async function attachImagesToWebChatComposer(
+  doc: Document,
+  composer: HTMLElement,
+  attachments: ComposerImageAttachment[],
+): Promise<boolean> {
+  const files = attachments
+    .map((attachment) => createFileFromComposerImage(doc, attachment))
+    .filter(Boolean) as File[];
+  if (!files.length) {
+    return false;
+  }
+  focusComposerForSubmit(composer);
+  if (dispatchImagePasteToComposer(doc, composer, files)) {
+    await sleepInDocument(doc, 500);
+    return true;
+  }
+  if (assignImagesToNearestFileInput(doc, composer, files)) {
+    await sleepInDocument(doc, 900);
+    return true;
+  }
+  return false;
+}
+
+function createFileFromComposerImage(
+  doc: Document,
+  attachment: ComposerImageAttachment,
+): File | null {
+  const win = doc.defaultView;
+  const dataURLMatch = attachment.dataURL.match(
+    /^data:([^;,]+)?(;base64)?,([\s\S]*)$/i,
+  );
+  if (!dataURLMatch) {
+    return null;
+  }
+  const mimeType = attachment.type || dataURLMatch[1] || "image/png";
+  const payload = dataURLMatch[3] || "";
+  let binary = "";
+  if (dataURLMatch[2]) {
+    const decodeBase64 = win?.atob?.bind(win);
+    if (!decodeBase64) {
+      return null;
+    }
+    binary = decodeBase64(payload);
+  } else {
+    binary = decodeURIComponent(payload);
+  }
+  const bytes = new Uint8Array(binary.length);
+  for (let index = 0; index < binary.length; index += 1) {
+    bytes[index] = binary.charCodeAt(index);
+  }
+  try {
+    return new (win?.File || File)([bytes], attachment.name || "image.png", {
+      type: mimeType,
+    });
+  } catch {
+    return null;
+  }
+}
+
+function dispatchImagePasteToComposer(
+  doc: Document,
+  composer: HTMLElement,
+  files: File[],
+): boolean {
+  const win = doc.defaultView;
+  try {
+    const dataTransfer = new (win?.DataTransfer || DataTransfer)();
+    files.forEach((file) => dataTransfer.items.add(file));
+    const event = new (win?.ClipboardEvent || ClipboardEvent)("paste", {
+      bubbles: true,
+      cancelable: true,
+      clipboardData: dataTransfer,
+    } as ClipboardEventInit);
+    const targets = Array.from(
+      new Set<EventTarget>(
+        [composer, doc.activeElement, doc, win].filter(Boolean) as EventTarget[],
+      ),
+    );
+    targets.forEach((target) => target.dispatchEvent(event));
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function assignImagesToNearestFileInput(
+  doc: Document,
+  composer: HTMLElement,
+  files: File[],
+): boolean {
+  const win = doc.defaultView;
+  const dataTransfer = new (win?.DataTransfer || DataTransfer)();
+  files.forEach((file) => dataTransfer.items.add(file));
+  const fileInputs = queryElementsDeep(
+    doc,
+    "input[type='file']",
+  ) as HTMLInputElement[];
+  const composerRect = composer.getBoundingClientRect();
+  const candidates = fileInputs
+    .filter((input) => acceptsImageFileInput(input))
+    .sort((left, right) => {
+      const leftRect = left.getBoundingClientRect();
+      const rightRect = right.getBoundingClientRect();
+      return (
+        Math.abs(leftRect.top - composerRect.top) +
+        Math.abs(leftRect.left - composerRect.left) -
+        (Math.abs(rightRect.top - composerRect.top) +
+          Math.abs(rightRect.left - composerRect.left))
+      );
+    });
+  for (const input of candidates.slice(0, 4)) {
+    try {
+      input.files = dataTransfer.files;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+      return true;
+    } catch {
+      // Some browsers disallow programmatic files assignment.
+    }
+  }
+  return false;
+}
+
+function acceptsImageFileInput(input: HTMLInputElement): boolean {
+  const accept = String(input.accept || "").toLowerCase();
+  return !accept || accept.includes("image") || accept.includes("*/*");
 }
 
 function ensureComposerContainsPrompt(
@@ -5501,6 +5803,11 @@ ${submitComposerWithPasteAndEnter.toString()}
 ${activateComposerForNativeInput.toString()}
 ${replaceComposerSelectionWithPrompt.toString()}
 ${selectComposerContents.toString()}
+${attachImagesToWebChatComposer.toString()}
+${createFileFromComposerImage.toString()}
+${dispatchImagePasteToComposer.toString()}
+${assignImagesToNearestFileInput.toString()}
+${acceptsImageFileInput.toString()}
 ${ensureComposerContainsPrompt.toString()}
 ${findWebChatSubmitButtons.toString()}
 ${queryElementsDeep.toString()}
@@ -8385,6 +8692,21 @@ function stableHash(value: string): string {
   return (hash >>> 0).toString(36);
 }
 
+function readFileAsDataURL(file: File): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result || ""));
+    reader.onerror = () =>
+      reject(reader.error || new Error("Failed to read image file"));
+    reader.readAsDataURL(file);
+  });
+}
+
+function parseDataURLMimeType(value: string): string {
+  const match = value.match(/^data:([^;,]+)/i);
+  return match?.[1] || "";
+}
+
 function copyTextToClipboard(text: string): void {
   try {
     Zotero.Utilities.Internal.copyTextToClipboard(text);
@@ -9104,6 +9426,35 @@ const styles: Record<string, React.CSSProperties> = {
     padding: "2px 0 4px",
     resize: "vertical",
     width: "100%",
+  },
+  hiddenFileInput: {
+    display: "none",
+  },
+  composerImagePreview: {
+    alignItems: "center",
+    border: "1px solid #e0e0e0",
+    borderRadius: "8px",
+    display: "flex",
+    gap: "8px",
+    minHeight: "42px",
+    minWidth: 0,
+    padding: "6px",
+  },
+  composerImageThumb: {
+    borderRadius: "6px",
+    flex: "0 0 auto",
+    height: "34px",
+    objectFit: "cover",
+    width: "46px",
+  },
+  composerImageName: {
+    flex: "1 1 auto",
+    fontSize: typography.meta,
+    fontWeight: 600,
+    minWidth: 0,
+    overflow: "hidden",
+    textOverflow: "ellipsis",
+    whiteSpace: "nowrap",
   },
   composerFooter: {
     alignItems: "center",
