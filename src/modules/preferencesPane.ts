@@ -552,10 +552,10 @@ function createSlashSectionElement(
   },
 ): HTMLElement {
   const section = createHtmlElement(doc, "section", {
-    style: "display: flex; flex-direction: column; gap: 10px;",
+    style: "display: flex; flex-direction: column; gap: 12px;",
   });
   const header = createHtmlElement(doc, "div", {
-    style: "display: flex; flex-direction: column; gap: 4px;",
+    style: "display: flex; flex-direction: column; gap: 5px;",
   });
   header.appendChild(createHtmlElement(doc, "strong", { text: title }));
   header.appendChild(
@@ -568,13 +568,13 @@ function createSlashSectionElement(
   section.appendChild(header);
 
   const body = createHtmlElement(doc, "div", {
-    style: "display: flex; flex-direction: column; gap: 10px;",
+    style: "display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: 10px;",
   });
   if (cards.length === 0) {
     body.appendChild(
       createHtmlElement(doc, "div", {
         style:
-          "border: 1px dashed rgba(0,0,0,0.18); border-radius: 8px; padding: 12px; color: rgba(0,0,0,0.62);",
+          "border: 1px dashed rgba(0,0,0,0.18); border-radius: 10px; padding: 14px; color: rgba(0,0,0,0.62); background: rgba(127,127,127,0.04);",
         text: emptyText,
       }),
     );
@@ -599,7 +599,7 @@ function createSlashCardElement(
       "data-slash-card-kind": card.kind,
     },
     style:
-      "border: 1px solid rgba(0,0,0,0.12); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: rgba(127,127,127,0.08);",
+      "border: 1px solid rgba(127,127,127,0.22); border-radius: 10px; padding: 12px; display: flex; flex-direction: column; gap: 10px; background: rgba(127,127,127,0.08); box-shadow: 0 1px 4px rgba(0,0,0,0.04);",
   });
 
   const header = createHtmlElement(doc, "div", {
@@ -619,6 +619,8 @@ function createSlashCardElement(
         "data-slash-card-kind": card.kind,
         type: "button",
       },
+      style:
+        "border-radius: 999px; min-height: 26px; padding: 3px 10px;",
       text: "Delete skill",
     }),
   );
@@ -667,17 +669,20 @@ function createSlashFieldElement(
   },
 ): HTMLElement {
   const wrapper = createHtmlElement(doc, "label", {
-    style: "display: flex; flex-direction: column; gap: 4px;",
+    style: "display: flex; flex-direction: column; gap: 5px;",
   });
   wrapper.appendChild(createHtmlElement(doc, "span", { text: label }));
   const field = multiline
     ? createHtmlElement(doc, "textarea", {
         attributes: { "data-slash-field": name },
-        style: "min-height: 84px;",
+        style:
+          "box-sizing: border-box; min-height: 92px; resize: vertical; width: 100%; border-radius: 8px; padding: 7px 9px;",
         value,
       })
     : createHtmlElement(doc, "input", {
         attributes: { "data-slash-field": name },
+        style:
+          "box-sizing: border-box; width: 100%; border-radius: 8px; padding: 7px 9px;",
         value,
       });
   wrapper.appendChild(field);

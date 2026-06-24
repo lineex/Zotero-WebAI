@@ -1952,6 +1952,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           <article
             style={{
               ...styles.assistantBubble,
+              ...(record.kind === "assistant" ? {} : styles.toolBubble),
               background: getRecordBubbleBackground(record.kind, theme),
               borderColor:
                 record.status === "error"
@@ -2003,7 +2004,13 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
               {renderMarkdownContent(record.body, theme)}
             </div>
             {record.thinking && (
-              <details style={styles.thinkingDetails}>
+              <details
+                style={{
+                  ...styles.thinkingDetails,
+                  background: theme.panelBackground,
+                  borderColor: theme.softBorder,
+                }}
+              >
                 <summary
                   style={{
                     ...styles.thinkingSummary,
@@ -2214,7 +2221,13 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           </div>
         </div>
       ) : (
-      <div style={styles.frameToolbar}>
+      <div
+        style={{
+          ...styles.frameToolbar,
+          background: theme.surfaceBackground,
+          borderColor: theme.softBorder,
+        }}
+      >
         <div style={styles.serviceBar}>
           {SERVICES.map((candidate) => (
             <button
@@ -2373,7 +2386,12 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
             borderColor: theme.softBorder,
           }}
         >
-          <div style={styles.executionHeader}>
+          <div
+            style={{
+              ...styles.executionHeader,
+              borderColor: theme.softBorder,
+            }}
+          >
             <span style={{ ...styles.executionTitle, color: theme.text }}>
               {text.labels.conversation}
             </span>
@@ -8868,20 +8886,22 @@ function copyTextToClipboard(text: string): void {
 
 const styles: Record<string, React.CSSProperties> = {
   container: {
+    boxSizing: "border-box",
     display: "flex",
     flex: "1 1 auto",
     flexDirection: "column",
     fontFamily:
-      'Arial, "Helvetica Neue", "Segoe UI", system-ui, sans-serif',
-    gap: "8px",
+      '"Noto Sans CJK SC", "Microsoft YaHei", "Segoe UI", system-ui, sans-serif',
+    gap: "10px",
     minHeight: 0,
     minWidth: 0,
     overflow: "hidden",
+    padding: "8px",
     width: "100%",
   },
   frameHost: {
     border: "1px solid #e0e0e0",
-    borderRadius: "6px",
+    borderRadius: "8px",
     boxSizing: "border-box",
     display: "flex",
     flex: "1 1 auto",
@@ -8912,6 +8932,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignItems: "center",
     border: "1px solid #e0e0e0",
     borderRadius: "8px",
+    boxSizing: "border-box",
     display: "flex",
     flex: "0 0 auto",
     flexWrap: "wrap",
@@ -8942,29 +8963,33 @@ const styles: Record<string, React.CSSProperties> = {
   },
   frameToolbar: {
     alignItems: "center",
+    border: "1px solid #e0e0e0",
+    borderRadius: "10px",
+    boxSizing: "border-box",
     display: "flex",
     flex: "0 0 auto",
     flexWrap: "wrap",
-    gap: "6px",
+    gap: "8px",
     justifyContent: "space-between",
     minWidth: 0,
+    padding: "8px",
   },
   serviceBar: {
     display: "flex",
     flex: "1 1 180px",
     flexWrap: "wrap",
-    gap: "6px",
+    gap: "4px",
     minWidth: 0,
   },
   serviceButton: {
     appearance: "none",
     border: "1px solid #c9c9c9",
-    borderRadius: "16px",
+    borderRadius: "8px",
     cursor: "pointer",
     fontSize: typography.label,
-    fontWeight: 600,
-    minHeight: "28px",
-    padding: "4px 10px",
+    fontWeight: 700,
+    minHeight: "30px",
+    padding: "5px 10px",
     whiteSpace: "nowrap",
   },
   frameActions: {
@@ -8975,12 +9000,12 @@ const styles: Record<string, React.CSSProperties> = {
   miniButton: {
     appearance: "none",
     border: "1px solid #c9c9c9",
-    borderRadius: "14px",
+    borderRadius: "8px",
     cursor: "pointer",
     fontSize: typography.label,
-    fontWeight: 500,
-    minHeight: "26px",
-    padding: "3px 9px",
+    fontWeight: 600,
+    minHeight: "30px",
+    padding: "4px 9px",
     whiteSpace: "nowrap",
   },
   primaryMiniButton: {
@@ -8988,18 +9013,18 @@ const styles: Record<string, React.CSSProperties> = {
   },
   executionPanel: {
     border: "1px solid #e0e0e0",
-    borderRadius: "10px",
+    borderRadius: "12px",
     boxSizing: "border-box",
     display: "flex",
     flex: "0 0 auto",
     flexDirection: "column",
-    gap: "10px",
+    gap: 0,
     height: "430px",
     maxHeight: "78vh",
     minHeight: "260px",
     minWidth: 0,
-    overflow: "auto",
-    padding: "10px",
+    overflow: "hidden",
+    padding: 0,
     resize: "vertical",
     width: "100%",
   },
@@ -9012,10 +9037,12 @@ const styles: Record<string, React.CSSProperties> = {
   },
   executionHeader: {
     alignItems: "center",
+    borderBottom: "1px solid #e0e0e0",
     display: "flex",
     gap: "8px",
     justifyContent: "space-between",
     minWidth: 0,
+    padding: "9px 12px",
   },
   executionHeaderActions: {
     alignItems: "center",
@@ -9038,25 +9065,29 @@ const styles: Record<string, React.CSSProperties> = {
   resultsLayout: {
     display: "flex",
     flex: "1 1 auto",
-    gap: "10px",
+    gap: 0,
     minHeight: 0,
     minWidth: 0,
     overflow: "hidden",
   },
   historyPanel: {
     border: "1px solid #e0e0e0",
-    borderRadius: "8px",
+    borderBottom: 0,
+    borderLeft: 0,
+    borderTop: 0,
+    borderRadius: 0,
     boxSizing: "border-box",
     display: "flex",
-    flex: "0 1 34%",
+    flex: "0 0 220px",
     flexDirection: "column",
     gap: "8px",
     maxHeight: "100%",
-    maxWidth: "42%",
+    maxWidth: "360px",
     minHeight: 0,
-    minWidth: "160px",
+    minWidth: "170px",
     overflow: "auto",
-    padding: "8px",
+    padding: "10px",
+    resize: "horizontal",
   },
   historyHeader: {
     alignItems: "center",
@@ -9081,14 +9112,14 @@ const styles: Record<string, React.CSSProperties> = {
     appearance: "none",
     background: "transparent",
     border: "1px solid #e0e0e0",
-    borderRadius: "6px",
+    borderRadius: "8px",
     cursor: "pointer",
     display: "flex",
     flexDirection: "column",
     gap: "2px",
-    minHeight: "52px",
+    minHeight: "54px",
     minWidth: 0,
-    padding: "6px 8px",
+    padding: "8px",
     textAlign: "left",
   },
   historyItemTitle: {
@@ -9115,13 +9146,13 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flex: "1 1 auto",
     flexDirection: "column",
-    gap: "18px",
+    gap: "16px",
     maxHeight: "100%",
     maxWidth: "100%",
     minWidth: 0,
     minHeight: 0,
     overflow: "auto",
-    padding: "4px 8px 12px",
+    padding: "12px",
     width: "100%",
   },
   emptyConversation: {
@@ -9136,7 +9167,7 @@ const styles: Record<string, React.CSSProperties> = {
     textAlign: "center",
   },
   chatTurn: {
-    borderRadius: "10px",
+    borderRadius: "12px",
     display: "flex",
     flexDirection: "column",
     gap: "10px",
@@ -9157,24 +9188,24 @@ const styles: Record<string, React.CSSProperties> = {
   },
   userBubble: {
     border: "1px solid #d7eed7",
-    borderRadius: "14px",
+    borderRadius: "12px",
     boxSizing: "border-box",
-    maxWidth: "78%",
+    maxWidth: "88%",
     minWidth: "160px",
     overflow: "auto",
-    padding: "13px 16px",
+    padding: "10px 12px",
     MozUserSelect: "text",
     userSelect: "text",
   },
   assistantBubble: {
     border: "1px solid #e2e2e2",
-    borderRadius: "14px",
+    borderRadius: "12px",
     boxSizing: "border-box",
     maxWidth: "100%",
     minHeight: "80px",
     minWidth: "220px",
     overflow: "auto",
-    padding: "14px 16px",
+    padding: "12px 14px",
     MozUserSelect: "text",
     userSelect: "text",
     width: "100%",
@@ -9184,7 +9215,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     gap: "10px",
     justifyContent: "space-between",
-    marginBottom: "8px",
+    marginBottom: "7px",
     minWidth: 0,
   },
   messageAuthor: {
@@ -9243,12 +9274,16 @@ const styles: Record<string, React.CSSProperties> = {
   },
   executionKind: {
     border: "1px solid #c9c9c9",
-    borderRadius: "6px",
+    borderRadius: "999px",
     flex: "0 0 auto",
     fontSize: typography.meta,
     fontWeight: 700,
     lineHeight: 1.25,
-    padding: "2px 7px",
+    padding: "2px 8px",
+  },
+  toolBubble: {
+    borderStyle: "solid",
+    boxShadow: "inset 3px 0 0 rgba(42, 90, 134, 0.26)",
   },
   executionSummaryText: {
     display: "flex",
@@ -9418,7 +9453,10 @@ const styles: Record<string, React.CSSProperties> = {
     wordBreak: "break-word",
   },
   thinkingDetails: {
-    marginTop: "6px",
+    border: "1px solid #e0e0e0",
+    borderRadius: "9px",
+    marginTop: "10px",
+    padding: "7px 9px",
   },
   thinkingSummary: {
     cursor: "pointer",
@@ -9445,7 +9483,7 @@ const styles: Record<string, React.CSSProperties> = {
     display: "flex",
     flexWrap: "wrap",
     gap: "6px",
-    justifyContent: "flex-start",
+    justifyContent: "flex-end",
     marginTop: "12px",
   },
   versionPager: {
@@ -9466,33 +9504,34 @@ const styles: Record<string, React.CSSProperties> = {
     appearance: "none",
     background: "transparent",
     border: "1px solid #c9c9c9",
-    borderRadius: "12px",
+    borderRadius: "999px",
     cursor: "pointer",
     fontSize: typography.meta,
     fontWeight: 600,
     minHeight: "24px",
-    padding: "2px 8px",
+    padding: "3px 9px",
     whiteSpace: "nowrap",
   },
   composerPanel: {
     border: "1px solid #e0e0e0",
-    borderRadius: "10px",
+    borderRadius: "14px",
+    boxSizing: "border-box",
     display: "flex",
     flex: "0 0 auto",
     flexDirection: "column",
     gap: "8px",
-    minHeight: "180px",
+    minHeight: "150px",
     minWidth: 0,
     overflow: "auto",
-    padding: "11px 12px 10px",
+    padding: "10px",
     position: "relative",
     resize: "vertical",
     width: "100%",
   },
   slashMenu: {
     border: "1px solid #e0e0e0",
-    borderRadius: "10px",
-    boxShadow: "none",
+    borderRadius: "12px",
+    boxShadow: "0 10px 24px rgba(0, 0, 0, 0.08)",
     boxSizing: "border-box",
     display: "flex",
     flexDirection: "column",
@@ -9507,7 +9546,7 @@ const styles: Record<string, React.CSSProperties> = {
     appearance: "none",
     background: "transparent",
     border: 0,
-    borderRadius: "8px",
+    borderRadius: "9px",
     cursor: "pointer",
     display: "flex",
     gap: "8px",
@@ -9545,7 +9584,7 @@ const styles: Record<string, React.CSSProperties> = {
     alignSelf: "flex-start",
     appearance: "none",
     border: "1px solid #d6e5f4",
-    borderRadius: "14px",
+    borderRadius: "999px",
     cursor: "pointer",
     fontSize: typography.label,
     fontWeight: 600,
@@ -9561,10 +9600,10 @@ const styles: Record<string, React.CSSProperties> = {
     font: "inherit",
     fontSize: typography.body,
     lineHeight: 1.55,
-    maxHeight: "260px",
-    minHeight: "108px",
+    maxHeight: "220px",
+    minHeight: "84px",
     outline: "none",
-    padding: "2px 0 4px",
+    padding: "4px 2px",
     resize: "vertical",
     width: "100%",
   },

@@ -12,37 +12,62 @@
     <html:link rel="localization" href="zotero-webai-preferences.ftl" />
   </linkset>
 
-  <groupbox>
+  <groupbox style="border: 0; margin: 0; padding: 0">
     <caption label="Zotero WebAI" />
     <vbox
-      style="display: flex; flex-direction: column; gap: 12px; padding: 8px 0"
+      style="display: flex; flex-direction: column; gap: 14px; padding: 8px 0"
     >
-      <description data-l10n-id="ai-assistant-pref-description" />
-
-      <hbox
-        style="display: flex; gap: 8px; align-items: center; margin-top: 6px"
+      <vbox
+        style="
+          display: flex;
+          flex-direction: column;
+          gap: 8px;
+          padding: 14px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          border-radius: 10px;
+          background: rgba(127, 127, 127, 0.06);
+        "
       >
-        <button
-          id="zotero-ai-assistant-pref-save"
-          label="Save"
-          data-l10n-id="ai-assistant-pref-save"
-        />
-        <button
-          id="zotero-ai-assistant-pref-export-debug-log"
-          label="Export Debug Log"
-          data-l10n-id="ai-assistant-pref-export-debug-log"
-        />
-        <description
-          id="zotero-ai-assistant-pref-status"
-          style="margin-inline-start: 8px"
-        />
-      </hbox>
+        <description data-l10n-id="ai-assistant-pref-description" />
 
-      <separator class="thin" />
+        <hbox
+          style="
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 4px;
+          "
+        >
+          <button
+            id="zotero-ai-assistant-pref-save"
+            label="Save"
+            data-l10n-id="ai-assistant-pref-save"
+          />
+          <button
+            id="zotero-ai-assistant-pref-export-debug-log"
+            label="Export Debug Log"
+            data-l10n-id="ai-assistant-pref-export-debug-log"
+          />
+          <description
+            id="zotero-ai-assistant-pref-status"
+            style="margin-inline-start: 8px"
+          />
+        </hbox>
+      </vbox>
 
-      <description data-l10n-id="ai-assistant-pref-evidence-description" />
-
-      <vbox style="display: flex; flex-direction: column; gap: 6px">
+      <vbox
+        style="
+          display: flex;
+          flex-direction: column;
+          gap: 10px;
+          padding: 14px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          border-radius: 10px;
+          background: rgba(127, 127, 127, 0.04);
+        "
+      >
+        <description data-l10n-id="ai-assistant-pref-evidence-description" />
         <label
           value="Evidence Provider"
           data-l10n-id="ai-assistant-pref-evidence-provider-label"
@@ -72,20 +97,19 @@
           </html:option>
         </html:select>
         <description data-l10n-id="ai-assistant-pref-evidence-provider-help" />
-      </vbox>
 
-      <vbox
-        id="zotero-ai-assistant-pref-mcp-settings"
-        style="
-          display: none;
-          flex-direction: column;
-          gap: 10px;
-          padding: 12px;
-          border: 1px solid rgba(32, 128, 96, 0.35);
-          border-radius: 8px;
-          background: rgba(32, 128, 96, 0.06);
-        "
-      >
+        <vbox
+          id="zotero-ai-assistant-pref-mcp-settings"
+          style="
+            display: none;
+            flex-direction: column;
+            gap: 10px;
+            padding: 12px;
+            border: 1px solid rgba(32, 128, 96, 0.35);
+            border-radius: 10px;
+            background: rgba(32, 128, 96, 0.06);
+          "
+        >
         <description
           data-l10n-id="ai-assistant-pref-mcp-settings-title"
           style="font-weight: 600; margin: 0"
@@ -121,52 +145,70 @@
         </hbox>
 
         <description data-l10n-id="ai-assistant-pref-mcp-help" />
+        </vbox>
+
+        <hbox
+          style="
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+          "
+        >
+          <button
+            id="zotero-ai-assistant-pref-evidence-validate"
+            label="Validate Evidence Provider"
+            data-l10n-id="ai-assistant-pref-evidence-validate"
+          />
+          <description
+            id="zotero-ai-assistant-pref-evidence-status"
+            style="margin-inline-start: 8px"
+          />
+        </hbox>
       </vbox>
 
-      <hbox style="display: flex; gap: 8px; align-items: center">
-        <button
-          id="zotero-ai-assistant-pref-evidence-validate"
-          label="Validate Evidence Provider"
-          data-l10n-id="ai-assistant-pref-evidence-validate"
-        />
-        <description
-          id="zotero-ai-assistant-pref-evidence-status"
-          style="margin-inline-start: 8px"
-        />
-      </hbox>
-
-      <separator class="thin" />
-
-      <description
-        data-l10n-id="ai-assistant-pref-commands-title"
-        style="font-weight: 600"
-      />
-      <description data-l10n-id="ai-assistant-pref-commands-help" />
-      <description
-        data-l10n-id="ai-assistant-pref-slash-title"
-        style="font-weight: 600; margin-top: 8px"
-      />
-      <description data-l10n-id="ai-assistant-pref-slash-help" />
-      <html:div
-        id="zotero-ai-assistant-pref-slash-custom"
-        style="display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 10px;"
-      ></html:div>
-      <html:div
+      <vbox
         style="
           display: flex;
-          gap: 8px;
-          align-items: center;
-          flex-wrap: wrap;
-          margin-top: 8px;
+          flex-direction: column;
+          gap: 10px;
+          padding: 14px;
+          border: 1px solid rgba(0, 0, 0, 0.12);
+          border-radius: 10px;
+          background: rgba(127, 127, 127, 0.04);
         "
       >
-        <button
-          id="zotero-ai-assistant-pref-slash-add"
-          label="Add command"
-          data-l10n-id="ai-assistant-pref-slash-add"
+        <description
+          data-l10n-id="ai-assistant-pref-commands-title"
+          style="font-weight: 600"
         />
-        <description id="zotero-ai-assistant-pref-slash-limit-status" />
-      </html:div>
+        <description data-l10n-id="ai-assistant-pref-commands-help" />
+        <description
+          data-l10n-id="ai-assistant-pref-slash-title"
+          style="font-weight: 600; margin-top: 4px"
+        />
+        <description data-l10n-id="ai-assistant-pref-slash-help" />
+        <html:div
+          id="zotero-ai-assistant-pref-slash-custom"
+          style="display: flex; flex-direction: column; gap: 10px; width: 100%; margin-top: 4px;"
+        ></html:div>
+        <html:div
+          style="
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-top: 4px;
+          "
+        >
+          <button
+            id="zotero-ai-assistant-pref-slash-add"
+            label="Add command"
+            data-l10n-id="ai-assistant-pref-slash-add"
+          />
+          <description id="zotero-ai-assistant-pref-slash-limit-status" />
+        </html:div>
+      </vbox>
       <html:textarea
         id="zotero-ai-assistant-pref-custom-presets"
         spellcheck="false"
