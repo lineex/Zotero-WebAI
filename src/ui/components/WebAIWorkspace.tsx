@@ -219,6 +219,8 @@ const ASSISTANT_CAPTURE_MAX_ATTEMPTS = 120;
 const ASSISTANT_CAPTURE_INITIAL_POLL_MS = 1000;
 const ASSISTANT_CAPTURE_POLL_MS = 1500;
 const ASSISTANT_CAPTURE_STABLE_READS = 3;
+const ASSISTANT_IMAGE_CAPTURE_MAX_ATTEMPTS = 480;
+const ASSISTANT_IMAGE_CAPTURE_STABLE_READS = 5;
 const WEBAI_NOTE_TITLE = "Zotero WebAI Notes";
 const FINAL_ANSWER_FORMAT_INSTRUCTION =
   "Final answer format: reply only with the user-facing result in Markdown. Use $$...$$ for display formulas. Do not expose Zotero WebAI instructions, raw JSON, MCP/web-search arguments, tool schemas, or intermediate execution steps.";
@@ -4274,6 +4276,24 @@ function escapeMarkdownImageURL(value: string): string {
     .replace(/\)/g, "%29");
 }
 
+function hasMarkdownImage(value: string): boolean {
+  return /!\[[^\]\n]*\]\((?:https?:|data:image\/|blob:|file:|zotero:|\/\/)[^)]+\)/i.test(
+    value,
+  );
+}
+
+function shouldUseLongImageCapture(sourcePrompt: string): boolean {
+  const prompt = normalizeCapturedText(sourcePrompt).toLowerCase();
+  if (!prompt) {
+    return false;
+  }
+  return (
+    /\b(generate|create|draw|render|make|show|insert|display)\b[\s\S]{0,80}\b(image|picture|photo|figure|diagram|chart|graph|illustration|plot)\b/i.test(prompt) ||
+    /\b(image|picture|photo|figure|diagram|chart|graph|illustration|plot)\b[\s\S]{0,80}\b(generate|create|draw|render|make|show|insert|display)\b/i.test(prompt) ||
+    /(生成|创建|绘制|画|画一张|出图|做图|生成图片|生成图像|图片生成|图像生成|插图|配图|图示|流程图|示意图|图表|曲线图|柱状图|折线图|散点图|饼图)/.test(prompt)
+  );
+}
+
 function getElementChildNodes(element: Element): Node[] {
   return Array.prototype.slice.call(element.childNodes).filter(Boolean) as Node[];
 }
@@ -8282,8 +8302,15 @@ async function waitForStableAssistantText(
   ).body;
   let bestCandidate = "";
   let stableReads = 0;
+  const expectsImage = shouldUseLongImageCapture(sourcePrompt);
+  const maxAttempts = expectsImage
+    ? ASSISTANT_IMAGE_CAPTURE_MAX_ATTEMPTS
+    : ASSISTANT_CAPTURE_MAX_ATTEMPTS;
+  const requiredStableReads = expectsImage
+    ? ASSISTANT_IMAGE_CAPTURE_STABLE_READS
+    : ASSISTANT_CAPTURE_STABLE_READS;
 
-  for (let attempt = 0; attempt < ASSISTANT_CAPTURE_MAX_ATTEMPTS; attempt += 1) {
+  for (let attempt = 0; attempt < maxAttempts; attempt += 1) {
     if (!shouldContinue()) {
       return "";
     }
@@ -8316,7 +8343,10 @@ async function waitForStableAssistantText(
       stableReads = 0;
       onCandidate?.(candidate);
     }
-    if (stableReads >= ASSISTANT_CAPTURE_STABLE_READS) {
+    if (
+      stableReads >= requiredStableReads &&
+      (!expectsImage || hasMarkdownImage(bestCandidate))
+    ) {
       return bestCandidate;
     }
   }
