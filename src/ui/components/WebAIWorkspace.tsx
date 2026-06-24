@@ -1263,12 +1263,18 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     const baselineText = await readLatestAssistantText(frameRef.current)
       .then((result) => (result.ok ? result.text || "" : ""))
       .catch(() => "");
-    copyTextToClipboard(prompt);
+    const nativeClipboardImageReady = attachments[0]
+      ? copyComposerImageToNativeClipboard(attachments[0])
+      : false;
+    if (!nativeClipboardImageReady) {
+      copyTextToClipboard(prompt);
+    }
     const result = await insertPromptIntoWebChat(
       frameRef.current,
       prompt,
       true,
       attachments,
+      nativeClipboardImageReady,
     );
     focusFrame(frameRef.current);
     const nextCaptureOptions = {
@@ -2945,12 +2951,19 @@ async function insertPromptIntoWebChat(
   prompt: string,
   submit = false,
   attachments: ComposerImageAttachment[] = [],
+  pasteImageFromNativeClipboard = false,
 ): Promise<PromptInsertResult> {
   if (!frame) {
     return { ok: false, reason: "web-frame-missing" };
   }
 
-  const directResult = await insertPromptDirectly(frame, prompt, submit, attachments);
+  const directResult = await insertPromptDirectly(
+    frame,
+    prompt,
+    submit,
+    attachments,
+    pasteImageFromNativeClipboard,
+  );
   if (directResult.ok) {
     if (submit && !directResult.submitted) {
       const scriptedResult = await insertPromptWithFrameScript(
@@ -2958,6 +2971,7 @@ async function insertPromptIntoWebChat(
         prompt,
         submit,
         attachments,
+        pasteImageFromNativeClipboard,
       );
       if (scriptedResult.ok && scriptedResult.submitted) {
         return scriptedResult;
@@ -2981,6 +2995,7 @@ async function insertPromptIntoWebChat(
     prompt,
     submit,
     attachments,
+    pasteImageFromNativeClipboard,
   );
   if (submit && (!scriptedResult.ok || !scriptedResult.submitted)) {
     const hostKeyboardResult = await submitFocusedWebChatWithHostKeyboard(
@@ -3033,6 +3048,7 @@ function insertPromptDirectly(
   prompt: string,
   submit: boolean,
   attachments: ComposerImageAttachment[],
+  pasteImageFromNativeClipboard: boolean,
 ): Promise<PromptInsertResult> {
   try {
     const doc = (frame as HTMLIFrameElement).contentWindow?.document;
@@ -3045,6 +3061,7 @@ function insertPromptDirectly(
       "direct-dom",
       submit,
       attachments,
+      pasteImageFromNativeClipboard,
     );
   } catch (error) {
     return Promise.resolve({
@@ -3062,6 +3079,7 @@ function insertPromptWithFrameScript(
   prompt: string,
   submit: boolean,
   attachments: ComposerImageAttachment[],
+  pasteImageFromNativeClipboard: boolean,
 ): Promise<PromptInsertResult> {
   const messageManager = getFrameMessageManager(frame);
   const addMessageListener = messageManager?.addMessageListener;
@@ -3082,6 +3100,7 @@ function insertPromptWithFrameScript(
     prompt,
     submit,
     attachments,
+    pasteImageFromNativeClipboard,
   );
 
   return new Promise((resolve) => {
@@ -3410,6 +3429,7 @@ function buildPromptInsertFrameScript(
   prompt: string,
   submit: boolean,
   attachments: ComposerImageAttachment[],
+  pasteImageFromNativeClipboard: boolean,
 ): string {
   return `
 (async function () {
@@ -3417,9 +3437,10 @@ function buildPromptInsertFrameScript(
   const prompt = ${JSON.stringify(prompt)};
   const submit = ${JSON.stringify(submit)};
   const attachments = ${JSON.stringify(attachments)};
+  const pasteImageFromNativeClipboard = ${JSON.stringify(pasteImageFromNativeClipboard)};
   ${insertPromptIntoDocumentSource()}
   try {
-    const result = await insertPromptIntoDocument(content.document, prompt, "frame-script", submit, attachments);
+    const result = await insertPromptIntoDocument(content.document, prompt, "frame-script", submit, attachments, pasteImageFromNativeClipboard);
     sendAsyncMessage(messageName, result);
   } catch (error) {
     sendAsyncMessage(messageName, {
@@ -3477,6 +3498,7 @@ async function insertPromptIntoDocument(
   method: string,
   submit = false,
   attachments: ComposerImageAttachment[] = [],
+  pasteImageFromNativeClipboard = false,
 ): Promise<PromptInsertResult> {
   const composer = findWebChatComposer(doc);
   if (!composer) {
@@ -3485,7 +3507,12 @@ async function insertPromptIntoDocument(
   writePromptToComposer(composer, prompt);
   await waitForPromptHydration(doc, composer, prompt);
   if (attachments.length) {
-    await attachImagesToWebChatComposer(doc, composer, attachments);
+    await attachImagesToWebChatComposer(
+      doc,
+      composer,
+      attachments,
+      pasteImageFromNativeClipboard,
+    );
   }
   const submitted = submit
     ? await submitWebChatPrompt(doc, composer, prompt, attachments.length > 0)
@@ -4747,6 +4774,7 @@ async function attachImagesToWebChatComposer(
   doc: Document,
   composer: HTMLElement,
   attachments: ComposerImageAttachment[],
+  pasteImageFromNativeClipboard = false,
 ): Promise<boolean> {
   const files = attachments
     .map((attachment) => createFileFromComposerImage(doc, attachment))
@@ -4755,12 +4783,16 @@ async function attachImagesToWebChatComposer(
     return false;
   }
   focusComposerForSubmit(composer);
-  if (dispatchImagePasteToComposer(doc, composer, files)) {
-    await sleepInDocument(doc, 500);
+  if (pasteImageFromNativeClipboard && pasteNativeClipboardImageToComposer(doc, composer)) {
+    await sleepInDocument(doc, 1500);
     return true;
   }
   if (assignImagesToNearestFileInput(doc, composer, files)) {
     await sleepInDocument(doc, 900);
+    return true;
+  }
+  if (dispatchImagePasteToComposer(doc, composer, files)) {
+    await sleepInDocument(doc, 500);
     return true;
   }
   return false;
@@ -4828,6 +4860,14 @@ function dispatchImagePasteToComposer(
   }
 }
 
+function pasteNativeClipboardImageToComposer(
+  doc: Document,
+  composer: HTMLElement,
+): boolean {
+  activateComposerForNativeInput(doc, composer);
+  return sendNativeShortcut(doc, 86);
+}
+
 function assignImagesToNearestFileInput(
   doc: Document,
   composer: HTMLElement,
@@ -4855,7 +4895,11 @@ function assignImagesToNearestFileInput(
     });
   for (const input of candidates.slice(0, 4)) {
     try {
-      input.files = dataTransfer.files;
+      if (typeof input.mozSetFileArray === "function") {
+        input.mozSetFileArray(files);
+      } else {
+        input.files = dataTransfer.files;
+      }
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
       return true;
@@ -5825,6 +5869,7 @@ ${selectComposerContents.toString()}
 ${attachImagesToWebChatComposer.toString()}
 ${createFileFromComposerImage.toString()}
 ${dispatchImagePasteToComposer.toString()}
+${pasteNativeClipboardImageToComposer.toString()}
 ${assignImagesToNearestFileInput.toString()}
 ${acceptsImageFileInput.toString()}
 ${ensureComposerContainsPrompt.toString()}
@@ -8736,6 +8781,71 @@ function createPastedImageFileName(dataURL: string): string {
         ? "gif"
         : "png";
   return `pasted-image.${extension}`;
+}
+
+function copyComposerImageToNativeClipboard(
+  image: ComposerImageAttachment,
+): boolean {
+  const dataURLMatch = image.dataURL.match(/^data:([^;,]+)?;base64,([\s\S]*)$/i);
+  if (!dataURLMatch) {
+    return false;
+  }
+  try {
+    const mimeType = image.type || dataURLMatch[1] || "image/png";
+    const binary = atobInHost(dataURLMatch[2] || "");
+    const bytes = new Uint8Array(binary.length);
+    for (let index = 0; index < binary.length; index += 1) {
+      bytes[index] = binary.charCodeAt(index);
+    }
+    const componentClasses = Components.classes as Record<
+      string,
+      {
+        createInstance?: (interfaceType: unknown) => unknown;
+        getService?: (interfaceType: unknown) => unknown;
+      }
+    >;
+    const imageTools = componentClasses[
+      "@mozilla.org/image/tools;1"
+    ].getService?.(Components.interfaces.imgITools) as imgITools;
+    const imageContainer = imageTools.decodeImageFromArrayBuffer(
+      bytes.buffer,
+      mimeType,
+    );
+    const transferable = componentClasses[
+      "@mozilla.org/widget/transferable;1"
+    ].createInstance?.(Components.interfaces.nsITransferable) as nsITransferable;
+    transferable.init(null as unknown as nsILoadContext);
+    const nativeImageFlavor = "application/x-moz-nativeimage";
+    transferable.addDataFlavor(nativeImageFlavor);
+    transferable.setTransferData(nativeImageFlavor, imageContainer);
+    const clipboard = componentClasses[
+      "@mozilla.org/widget/clipboard;1"
+    ].getService?.(Components.interfaces.nsIClipboard) as nsIClipboard;
+    clipboard.setData(
+      transferable,
+      null as unknown as nsIClipboardOwner,
+      Components.interfaces.nsIClipboard.kGlobalClipboard,
+    );
+    return true;
+  } catch (error) {
+    ztoolkit.log("Zotero WebAI failed to copy image to native clipboard:", error);
+    return false;
+  }
+}
+
+function atobInHost(value: string): string {
+  const hostWindow = Zotero.getMainWindow?.() as
+    | { atob?: (source: string) => string }
+    | undefined;
+  if (typeof hostWindow?.atob === "function") {
+    return hostWindow.atob(value);
+  }
+  const globalAtob = (globalThis as unknown as { atob?: (source: string) => string })
+    .atob;
+  if (typeof globalAtob === "function") {
+    return globalAtob(value);
+  }
+  throw new Error("No base64 decoder is available");
 }
 
 function copyTextToClipboard(text: string): void {
