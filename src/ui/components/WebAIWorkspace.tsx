@@ -2549,6 +2549,16 @@ async function insertPromptIntoWebChat(
   if (directResult.ok) {
     if (submit && !directResult.submitted) {
       const scriptedResult = await insertPromptWithFrameScript(frame, prompt, submit);
+      if (scriptedResult.ok && scriptedResult.submitted) {
+        return scriptedResult;
+      }
+      const hostKeyboardResult = await submitFocusedWebChatWithHostKeyboard(
+        frame,
+        prompt,
+      );
+      if (hostKeyboardResult.ok) {
+        return hostKeyboardResult;
+      }
       if (scriptedResult.ok) {
         return scriptedResult;
       }
@@ -2556,7 +2566,51 @@ async function insertPromptIntoWebChat(
     return directResult;
   }
 
-  return insertPromptWithFrameScript(frame, prompt, submit);
+  const scriptedResult = await insertPromptWithFrameScript(frame, prompt, submit);
+  if (submit && (!scriptedResult.ok || !scriptedResult.submitted)) {
+    const hostKeyboardResult = await submitFocusedWebChatWithHostKeyboard(
+      frame,
+      prompt,
+    );
+    if (hostKeyboardResult.ok) {
+      return hostKeyboardResult;
+    }
+  }
+  return scriptedResult;
+}
+
+async function submitFocusedWebChatWithHostKeyboard(
+  frame: Element,
+  prompt: string,
+): Promise<PromptInsertResult> {
+  const doc = frame.ownerDocument;
+  if (!doc) {
+    return { ok: false, reason: "host-document-missing" };
+  }
+  focusFrame(frame);
+  try {
+    (frame as HTMLElement).focus?.();
+  } catch {
+    // Browser wrappers can reject focus while remoteness changes.
+  }
+  await sleepWithHostTimer(120);
+  const enterSent = sendNativeEnter(doc);
+  if (!enterSent) {
+    return {
+      ok: false,
+      method: "host-keyboard",
+      reason: "host-enter-unavailable",
+      submitAttempted: true,
+    };
+  }
+  await sleepWithHostTimer(700);
+  return {
+    ok: true,
+    method: "host-keyboard-enter",
+    reason: "host-enter-dispatched",
+    submitAttempted: true,
+    submitted: true,
+  };
 }
 
 function insertPromptDirectly(
@@ -2999,7 +3053,7 @@ async function insertPromptIntoDocument(
   }
   writePromptToComposer(composer, prompt);
   await waitForPromptHydration(doc, composer, prompt);
-  const submitted = submit ? await submitWebChatPrompt(doc, composer) : false;
+  const submitted = submit ? await submitWebChatPrompt(doc, composer, prompt) : false;
   return {
     ok: true,
     method,
@@ -3731,13 +3785,18 @@ function findWebChatComposer(doc: Document): HTMLElement | null {
 async function submitWebChatPrompt(
   doc: Document,
   composer: HTMLElement,
+  prompt: string,
 ): Promise<boolean> {
   focusComposerForSubmit(composer);
-  const fingerprint = createPromptFingerprint(getComposerText(composer));
+  const fingerprint = createPromptFingerprint(prompt || getComposerText(composer));
+  if (await submitComposerWithPasteAndEnter(doc, composer, prompt, fingerprint)) {
+    return true;
+  }
   const delays = [80, 120, 180, 260, 360, 520, 760, 1000, 1300, 1800];
   for (const delay of delays) {
     await sleepInDocument(doc, delay);
     const activeComposer = findWebChatComposer(doc) || composer;
+    ensureComposerContainsPrompt(activeComposer, prompt, fingerprint);
     focusComposerForSubmit(activeComposer);
     dispatchComposerEvents(activeComposer, getComposerText(activeComposer));
 
@@ -3793,6 +3852,132 @@ async function submitWebChatPrompt(
   }
 
   return false;
+}
+
+async function submitComposerWithPasteAndEnter(
+  doc: Document,
+  composer: HTMLElement,
+  prompt: string,
+  fingerprint: { head: string; tail: string },
+): Promise<boolean> {
+  let activeComposer = findWebChatComposer(doc) || composer;
+  activateComposerForNativeInput(doc, activeComposer);
+  await sleepInDocument(doc, 80);
+  activeComposer = findWebChatComposer(doc) || activeComposer;
+  replaceComposerSelectionWithPrompt(doc, activeComposer, prompt);
+  await waitForPromptHydration(doc, activeComposer, prompt);
+  activeComposer = findWebChatComposer(doc) || activeComposer;
+  ensureComposerContainsPrompt(activeComposer, prompt, fingerprint);
+  activateComposerForNativeInput(doc, activeComposer);
+  await sleepInDocument(doc, 120);
+
+  const nativeEnterSent = sendNativeEnter(doc);
+  const domEnterSent = dispatchKeyboardSubmitToComposer(doc, activeComposer, {});
+  if (nativeEnterSent || domEnterSent) {
+    if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 1500)) {
+      return true;
+    }
+  }
+
+  const submitButtons = findWebChatSubmitButtons(doc, activeComposer);
+  for (const submitButton of submitButtons.slice(0, 8)) {
+    clickSubmitButton(submitButton);
+    if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 800)) {
+      return true;
+    }
+  }
+
+  if (clickComposerSubmitHotspots(doc, activeComposer)) {
+    if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 900)) {
+      return true;
+    }
+  }
+  if (clickViewportSubmitHotspots(doc, activeComposer)) {
+    if (await waitForPromptSubmitted(doc, activeComposer, fingerprint, 900)) {
+      return true;
+    }
+  }
+
+  // DeepSeek, Z.ai and ChatGPT can keep the prompt visible while generation starts.
+  // Once a trusted Enter was sent into the focused web composer, continue capture
+  // instead of falling back to "copied only".
+  return nativeEnterSent;
+}
+
+function activateComposerForNativeInput(
+  doc: Document,
+  composer: HTMLElement,
+): void {
+  try {
+    composer.scrollIntoView?.({ block: "nearest", inline: "nearest" });
+  } catch {
+    // Some embedded pages reject scroll options.
+  }
+  focusComposerForSubmit(composer);
+  const center = getElementCenter(composer);
+  sendNativeMouseClick(doc, center.x, center.y);
+  focusComposerForSubmit(composer);
+}
+
+function replaceComposerSelectionWithPrompt(
+  doc: Document,
+  composer: HTMLElement,
+  prompt: string,
+): void {
+  focusComposerForSubmit(composer);
+  selectComposerContents(doc, composer);
+  const fingerprint = createPromptFingerprint(prompt);
+  if (sendNativeShortcut(doc, 65) && sendNativeShortcut(doc, 86)) {
+    dispatchComposerEvents(composer, prompt);
+    if (textMatchesPromptFingerprint(getComposerText(composer), fingerprint)) {
+      return;
+    }
+  }
+  let pasted = false;
+  try {
+    pasted = doc.execCommand("paste");
+  } catch {
+    pasted = false;
+  }
+  if (!pasted || !textMatchesPromptFingerprint(getComposerText(composer), fingerprint)) {
+    writePromptToComposer(composer, prompt);
+  } else {
+    dispatchComposerEvents(composer, prompt);
+  }
+}
+
+function selectComposerContents(doc: Document, composer: HTMLElement): void {
+  const tagName = composer.tagName.toLowerCase();
+  if (tagName === "textarea" || tagName === "input") {
+    const input = composer as HTMLTextAreaElement | HTMLInputElement;
+    try {
+      input.focus();
+      input.setSelectionRange(0, String(input.value || "").length);
+      return;
+    } catch {
+      // Fall through to document selection for unusual input wrappers.
+    }
+  }
+  try {
+    const selection = doc.defaultView?.getSelection();
+    const range = doc.createRange();
+    range.selectNodeContents(composer);
+    selection?.removeAllRanges();
+    selection?.addRange(range);
+  } catch {
+    // Best effort; writePromptToComposer will still replace the value.
+  }
+}
+
+function ensureComposerContainsPrompt(
+  composer: HTMLElement,
+  prompt: string,
+  fingerprint: { head: string; tail: string },
+): void {
+  if (!prompt || textMatchesPromptFingerprint(getComposerText(composer), fingerprint)) {
+    return;
+  }
+  writePromptToComposer(composer, prompt);
 }
 
 function findWebChatSubmitButtons(
@@ -4038,6 +4223,7 @@ function clickSubmitButton(element: HTMLElement): void {
   } catch {
     // Synthetic clicks are a final fallback.
   }
+  invokeFrameworkClickHandlers(element);
 }
 
 function getElementCenter(element: HTMLElement): { x: number; y: number } {
@@ -4055,6 +4241,13 @@ function getWindowUtils(doc: Document): {
     charCode: number,
     modifiers: number,
     flags?: number,
+  ) => void;
+  sendNativeKeyEvent?: (
+    keyboardLayout: number,
+    nativeKeyCode: number,
+    modifiers: number,
+    chars: string,
+    unmodifiedChars: string,
   ) => void;
   sendMouseEvent?: (
     type: string,
@@ -4077,6 +4270,13 @@ function getWindowUtils(doc: Document): {
             charCode: number,
             modifiers: number,
             flags?: number,
+          ) => void;
+          sendNativeKeyEvent?: (
+            keyboardLayout: number,
+            nativeKeyCode: number,
+            modifiers: number,
+            chars: string,
+            unmodifiedChars: string,
           ) => void;
           sendMouseEvent?: (
             type: string,
@@ -4133,17 +4333,54 @@ function sendNativeMouseClick(doc: Document, x: number, y: number): boolean {
 
 function sendNativeEnter(doc: Document): boolean {
   const utils = getWindowUtils(doc);
-  if (!utils || typeof utils.sendKeyEvent !== "function") {
+  if (
+    !utils ||
+    (typeof utils.sendKeyEvent !== "function" &&
+      typeof utils.sendNativeKeyEvent !== "function")
+  ) {
     return false;
+  }
+  let sent = false;
+  const nativeKeySender = utils.sendNativeKeyEvent;
+  if (typeof nativeKeySender === "function") {
+    try {
+      nativeKeySender.call(utils, 0, 13, 0, "\r", "\r");
+      sent = true;
+    } catch {
+      // Fall through to DOM window-utils key events.
+    }
+  }
+  if (typeof utils.sendKeyEvent !== "function") {
+    return sent;
   }
   try {
     utils.sendKeyEvent("keydown", 13, 0, 0);
+    utils.sendKeyEvent("keypress", 0, 13, 0);
     utils.sendKeyEvent("keypress", 13, 13, 0);
     utils.sendKeyEvent("keyup", 13, 0, 0);
     return true;
   } catch {
+    return sent;
+  }
+}
+
+function sendNativeShortcut(doc: Document, keyCode: number, charCode = 0): boolean {
+  const utils = getWindowUtils(doc);
+  if (!utils || typeof utils.sendKeyEvent !== "function") {
     return false;
   }
+  const modifiers = [0x0002, 0x0008];
+  for (const modifier of modifiers) {
+    try {
+      utils.sendKeyEvent("keydown", keyCode, 0, modifier);
+      utils.sendKeyEvent("keypress", charCode ? 0 : keyCode, charCode, modifier);
+      utils.sendKeyEvent("keyup", keyCode, 0, modifier);
+      return true;
+    } catch {
+      // Try the next platform modifier.
+    }
+  }
+  return false;
 }
 
 function clickComposerSubmitHotspots(doc: Document, composer: HTMLElement): boolean {
@@ -4175,6 +4412,103 @@ function clickComposerSubmitHotspots(doc: Document, composer: HTMLElement): bool
     attempted = sendNativeMouseClick(doc, x, y) || attempted;
   });
   return attempted;
+}
+
+function clickViewportSubmitHotspots(doc: Document, composer: HTMLElement): boolean {
+  const win = doc.defaultView;
+  const viewportWidth = Math.max(
+    doc.documentElement?.clientWidth || 0,
+    win?.innerWidth || 0,
+  );
+  const viewportHeight = Math.max(
+    doc.documentElement?.clientHeight || 0,
+    win?.innerHeight || 0,
+  );
+  const rects = getSubmitCandidateContainers(composer)
+    .map((element) => element.getBoundingClientRect())
+    .filter((rect) => rect.width >= 160 && rect.height >= 40);
+  rects.unshift(composer.getBoundingClientRect());
+
+  const points: Array<{ x: number; y: number }> = [];
+  rects.forEach((rect) => {
+    points.push(
+      { x: rect.right - 28, y: rect.bottom - 28 },
+      { x: rect.right - 44, y: rect.bottom - 24 },
+      { x: rect.right - 32, y: rect.top + rect.height / 2 },
+    );
+  });
+  if (viewportWidth && viewportHeight) {
+    points.push(
+      { x: viewportWidth - 42, y: viewportHeight - 42 },
+      { x: viewportWidth - 70, y: viewportHeight - 48 },
+    );
+  }
+
+  let attempted = false;
+  points.forEach((point) => {
+    const x = Math.max(1, Math.round(Math.min(point.x, viewportWidth || point.x)));
+    const y = Math.max(1, Math.round(Math.min(point.y, viewportHeight || point.y)));
+    const target = doc.elementFromPoint(x, y) as HTMLElement | null;
+    if (target && typeof target.getBoundingClientRect === "function") {
+      attempted = true;
+      const clickableAncestor = findClickableAncestor(target, composer);
+      clickSubmitButton(clickableAncestor || target);
+    } else {
+      attempted = sendNativeMouseClick(doc, x, y) || attempted;
+    }
+  });
+  return attempted;
+}
+
+function invokeFrameworkClickHandlers(element: HTMLElement): void {
+  const candidates: HTMLElement[] = [];
+  let current: HTMLElement | null = element;
+  let depth = 0;
+  while (current && depth < 5) {
+    candidates.push(current);
+    current = current.parentElement as HTMLElement | null;
+    depth += 1;
+  }
+  candidates.forEach((candidate) => {
+    const propertyNames = Object.getOwnPropertyNames(candidate);
+    propertyNames.forEach((name) => {
+      if (!/^__react(Props|EventHandlers)\$/.test(name)) {
+        return;
+      }
+      const props = (candidate as unknown as Record<string, unknown>)[name] as
+        | Record<string, unknown>
+        | undefined;
+      const handlers = [
+        props?.onPointerDown,
+        props?.onMouseDown,
+        props?.onClick,
+        props?.onPointerUp,
+        props?.onMouseUp,
+      ];
+      handlers.forEach((handler) => {
+        if (typeof handler !== "function") {
+          return;
+        }
+        try {
+          handler({
+            button: 0,
+            buttons: 1,
+            currentTarget: candidate,
+            defaultPrevented: false,
+            isDefaultPrevented: () => false,
+            isPropagationStopped: () => false,
+            nativeEvent: {},
+            preventDefault: () => undefined,
+            stopPropagation: () => undefined,
+            target: element,
+            type: "click",
+          });
+        } catch {
+          // Framework internals are best effort and differ by provider.
+        }
+      });
+    });
+  });
 }
 
 function dispatchPointerMouseSequence(
@@ -4498,10 +4832,21 @@ function setNativeInputValue(
       ? (win?.HTMLTextAreaElement || HTMLTextAreaElement).prototype
       : (win?.HTMLInputElement || HTMLInputElement).prototype;
   const descriptor = Object.getOwnPropertyDescriptor(prototype, "value");
+  const previousValue = element.value;
   if (descriptor?.set) {
     descriptor.set.call(element, value);
   } else {
     element.value = value;
+  }
+  try {
+    const tracker = (
+      element as HTMLTextAreaElement & {
+        _valueTracker?: { setValue: (value: string) => void };
+      }
+    )._valueTracker;
+    tracker?.setValue(previousValue);
+  } catch {
+    // React's private value tracker is optional and may not exist.
   }
 }
 
@@ -4571,6 +4916,11 @@ ${dispatchComposerEvents.toString()}
 ${waitForPromptHydration.toString()}
 ${sleepInDocument.toString()}
 ${submitWebChatPrompt.toString()}
+${submitComposerWithPasteAndEnter.toString()}
+${activateComposerForNativeInput.toString()}
+${replaceComposerSelectionWithPrompt.toString()}
+${selectComposerContents.toString()}
+${ensureComposerContainsPrompt.toString()}
 ${findWebChatSubmitButtons.toString()}
 ${queryElementsDeep.toString()}
 ${isVisibleSubmitCandidate.toString()}
@@ -4582,7 +4932,10 @@ ${getElementCenter.toString()}
 ${getWindowUtils.toString()}
 ${sendNativeMouseClick.toString()}
 ${sendNativeEnter.toString()}
+${sendNativeShortcut.toString()}
 ${clickComposerSubmitHotspots.toString()}
+${clickViewportSubmitHotspots.toString()}
+${invokeFrameworkClickHandlers.toString()}
 ${dispatchPointerMouseSequence.toString()}
 ${dispatchEnterToComposer.toString()}
 ${dispatchModifiedEnterToComposer.toString()}
