@@ -1422,13 +1422,31 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     if (!file) {
       return;
     }
+    await setComposerImageFromFile(file);
+  };
+
+  const handleComposerPaste = async (
+    event: React.ClipboardEvent<HTMLTextAreaElement>,
+  ) => {
+    const items = Array.from(event.clipboardData?.items || []);
+    const imageItem = items.find((item) => item.type.startsWith("image/"));
+    const file = imageItem?.getAsFile();
+    if (!file) {
+      return;
+    }
+    event.preventDefault();
+    await setComposerImageFromFile(file);
+  };
+
+  const setComposerImageFromFile = async (file: File) => {
     const dataURL = await readFileAsDataURL(file);
+    const imageName = file.name || createPastedImageFileName(dataURL);
     setComposerImage({
       dataURL,
-      name: file.name || "image",
+      name: imageName,
       type: file.type || parseDataURLMimeType(dataURL) || "image/png",
     });
-    setStatus(text.status.imageAttached(file.name || "image"));
+    setStatus(text.status.imageAttached(imageName));
     setIsError(false);
   };
 
@@ -2519,6 +2537,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
         <textarea
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={handleKeyDown}
+          onPaste={(event) => void runAction(() => handleComposerPaste(event))}
           placeholder={text.composerPlaceholder}
           style={{
             ...styles.composerInput,
@@ -8705,6 +8724,18 @@ function readFileAsDataURL(file: File): Promise<string> {
 function parseDataURLMimeType(value: string): string {
   const match = value.match(/^data:([^;,]+)/i);
   return match?.[1] || "";
+}
+
+function createPastedImageFileName(dataURL: string): string {
+  const mimeType = parseDataURLMimeType(dataURL);
+  const extension = mimeType.includes("jpeg")
+    ? "jpg"
+    : mimeType.includes("webp")
+      ? "webp"
+      : mimeType.includes("gif")
+        ? "gif"
+        : "png";
+  return `pasted-image.${extension}`;
 }
 
 function copyTextToClipboard(text: string): void {
