@@ -45,3 +45,24 @@ ai-assistant-pref-sync-password-label = 密码
 ai-assistant-pref-sync-test = 测试
 ai-assistant-pref-sync-push = 上传
 ai-assistant-pref-sync-pull = 下载
+
+ai-assistant-pref-theme-mode-label = 主题模式
+ai-assistant-pref-theme-mode-auto = 跟随系统
+ai-assistant-pref-theme-mode-light = 浅色
+ai-assistant-pref-theme-mode-dark = 深色
+
+ai-assistant-pref-thinking-effort-label = 默认思考强度
+ai-assistant-pref-thinking-effort-none = 关闭
+ai-assistant-pref-thinking-effort-low = 低
+ai-assistant-pref-thinking-effort-medium = 中等
+ai-assistant-pref-thinking-effort-high = 高
+ai-assistant-pref-thinking-effort-xhigh = 极高
+
+ai-assistant-pref-selection-toolbar-label = 启用选区上方的划词浮动工具栏
+ai-assistant-pref-token-display-label = 启用底部状态栏的 Token 用量显示
+ai-assistant-pref-quick-prompts-label = 启用作用域下方的快捷提示词药片按钮
+
+ai-assistant-pref-selection-context-mode-label = 默认 PDF 选区上下文范围
+ai-assistant-pref-selection-context-mode-selection = 仅选中文本
+ai-assistant-pref-selection-context-mode-full = 选中文本 + 全文总览
+

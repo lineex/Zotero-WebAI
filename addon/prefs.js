@@ -22,3 +22,11 @@ pref("extensions.zotero.zotero-webai.configSyncRemotePath", "Zotero-WebAI-config
 pref("extensions.zotero.zotero-webai.configSyncUsername", "");
 pref("extensions.zotero.zotero-webai.configSyncPassword", "");
 pref("extensions.zotero.zotero-webai.configSyncSnapshot", "");
+
+pref("extensions.zotero.zotero-webai.themeMode", "auto");
+pref("extensions.zotero.zotero-webai.defaultThinkingEffort", "none");
+pref("extensions.zotero.zotero-webai.selectionToolbarEnabled", true);
+pref("extensions.zotero.zotero-webai.tokenDisplayEnabled", true);
+pref("extensions.zotero.zotero-webai.quickPromptsEnabled", true);
+pref("extensions.zotero.zotero-webai.selectionContextMode", "selection-only");
+

@@ -1,10 +1,10 @@
-import React, { useEffect, useRef, useState } from "react";
+import React, { useCallback, useEffect, useRef, useState } from "react";
 import {
   assembleContext,
   type AssembledContext,
 } from "../../services/contextAssembler";
 import { getCurrentScope } from "../../services/scopeResolver";
-import { getSettings, type Settings } from "../../services/settingsManager";
+import { getSettings, saveSettings, type Settings } from "../../services/settingsManager";
 import type { ScopeContext } from "../../types/scope";
 import { createHostEvent } from "../../utils/domEvents";
 import { debugLog } from "../../utils/debugLog";
@@ -15,12 +15,23 @@ import {
   type ReaderActionDetail,
 } from "../readerActionFlow";
 import { isSidebarLocationSelected } from "../sidebarSection";
-import { getSidebarTheme } from "../theme";
+import { getSidebarTheme, isDarkTheme, type ThemeMode } from "../theme";
 import { typography } from "../typography";
 import {
   WebAIWorkspace,
   type IncomingWebPrompt,
 } from "./WebAIWorkspace";
+import { ModelSelector } from "./ModelSelector";
+import { ThemeToggle } from "./ThemeToggle";
+import {
+  SelectionContextBar,
+  type SelectionContextMode,
+} from "./SelectionContextBar";
+import { TokenUsageBar } from "./TokenUsageBar";
+import {
+  ThinkingEffortSelector,
+  type ThinkingEffort,
+} from "./ThinkingEffortSelector";
 
 interface SidebarProps {
   eventBus: EventTarget;
@@ -42,8 +53,59 @@ export const Sidebar: React.FC<SidebarProps> = ({
     useState<IncomingWebPrompt | null>(null);
   const [themeRefreshKey, setThemeRefreshKey] = useState(0);
   const scopeSyncVersionRef = useRef(0);
-  const theme = getSidebarTheme(hostWindow);
+
+  // --- New state for modern UI features ---
+  const [themeMode, setThemeMode] = useState<ThemeMode>(
+    () => settings.themeMode || "auto",
+  );
+  const [thinkingEffort, setThinkingEffort] = useState<ThinkingEffort>(
+    () => settings.defaultThinkingEffort || "none",
+  );
+  const [selectionText, setSelectionText] = useState<string>("");
+  const [selectionContextMode, setSelectionContextMode] = useState<SelectionContextMode>("selection-only");
+  const [tokenInput, setTokenInput] = useState(0);
+  const [tokenOutput, setTokenOutput] = useState(0);
+  const [contextTokenUsed, setContextTokenUsed] = useState(0);
+  const contextTokenMax = settings.maxContextBudget || 4000;
+
+  const theme = getSidebarTheme(hostWindow, themeMode);
+  const dark = isDarkTheme(hostWindow, themeMode);
   const isZh = isChineseLocale(getRequestedLanguage());
+
+  // --- Theme mode change handler ---
+  const handleThemeModeChange = useCallback((mode: ThemeMode) => {
+    setThemeMode(mode);
+    setThemeRefreshKey((v) => v + 1);
+    try {
+      saveSettings({ themeMode: mode });
+    } catch {
+      // Ignore save errors for optional new fields
+    }
+  }, []);
+
+  // --- Token usage event listener ---
+  useEffect(() => {
+    const handleTokenUpdate = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      if (detail) {
+        if (typeof detail.inputTokens === "number") setTokenInput(detail.inputTokens);
+        if (typeof detail.outputTokens === "number") setTokenOutput(detail.outputTokens);
+        if (typeof detail.contextUsed === "number") setContextTokenUsed(detail.contextUsed);
+      }
+    };
+    eventBus.addEventListener("tokenUsageUpdate", handleTokenUpdate);
+    return () => eventBus.removeEventListener("tokenUsageUpdate", handleTokenUpdate);
+  }, [eventBus]);
+
+  // --- Selection text event listener ---
+  useEffect(() => {
+    const handleSelectionUpdate = (e: Event) => {
+      const detail = (e as CustomEvent).detail;
+      setSelectionText(typeof detail?.text === "string" ? detail.text : "");
+    };
+    eventBus.addEventListener("selectionTextUpdate", handleSelectionUpdate);
+    return () => eventBus.removeEventListener("selectionTextUpdate", handleSelectionUpdate);
+  }, [eventBus]);
 
   const syncSidebarScope = async (
     nextScope: ScopeContext | null,
@@ -186,12 +248,15 @@ export const Sidebar: React.FC<SidebarProps> = ({
     eventBus.dispatchEvent(createHostEvent("settingsChange", hostWindow));
   };
 
+  const tokenDisplayEnabled = settings.tokenDisplayEnabled !== false;
+
   return (
     <SidebarErrorBoundary>
       <div
         className="zotero-webai-shell"
         data-layout={settings.workspaceLayout}
         data-location={location}
+        data-theme={dark ? "dark" : "light"}
         key={themeRefreshKey}
         style={{
           ...styles.container,
@@ -216,18 +281,32 @@ export const Sidebar: React.FC<SidebarProps> = ({
                 {isZh ? "网页 AI 阅读工作区" : "Web AI reading workspace"}
               </span>
             </div>
-            <span
-              className="zotero-webai-shell-chip"
-              style={{
-                ...styles.shellBadge,
-                background: theme.badgeBackground,
-                borderColor: theme.badgeBorder,
-                color: theme.badgeText,
-              }}
-              title={isZh ? "当前工作区布局" : "Current workspace layout"}
-            >
-              {formatLayoutBadge(settings.workspaceLayout, isZh)}
-            </span>
+            <div style={styles.shellHeaderActions}>
+              <ModelSelector
+                hostWindow={hostWindow}
+                theme={theme}
+                isZh={isZh}
+              />
+              <ThemeToggle
+                currentMode={themeMode}
+                isDark={dark}
+                theme={theme}
+                isZh={isZh}
+                onToggle={handleThemeModeChange}
+              />
+              <span
+                className="zotero-webai-shell-chip"
+                style={{
+                  ...styles.shellBadge,
+                  background: theme.badgeBackground,
+                  borderColor: theme.badgeBorder,
+                  color: theme.badgeText,
+                }}
+                title={isZh ? "当前工作区布局" : "Current workspace layout"}
+              >
+                {formatLayoutBadge(settings.workspaceLayout, isZh)}
+              </span>
+            </div>
           </div>
           <div
             className="zotero-webai-shell-scope"
@@ -259,6 +338,19 @@ export const Sidebar: React.FC<SidebarProps> = ({
             </div>
           </div>
         </header>
+
+        {/* Selection context bar — shows when text is selected in PDF */}
+        {selectionText && (
+          <SelectionContextBar
+            selectedText={selectionText}
+            mode={selectionContextMode}
+            theme={theme}
+            isZh={isZh}
+            onModeChange={setSelectionContextMode}
+            onDismiss={() => setSelectionText("")}
+          />
+        )}
+
         <div
           className="zotero-webai-shell-body"
           style={{
@@ -282,6 +374,27 @@ export const Sidebar: React.FC<SidebarProps> = ({
             onScopeRefresh={handleRefreshScope}
             scope={scope}
             settings={settings}
+          />
+        </div>
+
+        {/* Thinking effort selector + Token usage bar at the bottom */}
+        <div style={styles.shellFooter}>
+          <div style={styles.footerLeft}>
+            <ThinkingEffortSelector
+              value={thinkingEffort}
+              theme={theme}
+              isZh={isZh}
+              onChange={setThinkingEffort}
+            />
+          </div>
+          <TokenUsageBar
+            inputTokens={tokenInput}
+            outputTokens={tokenOutput}
+            contextUsed={contextTokenUsed}
+            contextMax={contextTokenMax}
+            theme={theme}
+            isZh={isZh}
+            visible={tokenDisplayEnabled}
           />
         </div>
       </div>
@@ -441,6 +554,28 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "8px",
     justifyContent: "space-between",
     minWidth: 0,
+  },
+  shellHeaderActions: {
+    alignItems: "center",
+    display: "flex",
+    flex: "0 0 auto",
+    gap: "6px",
+  },
+  shellFooter: {
+    alignItems: "center",
+    borderTop: "1px solid",
+    borderTopColor: "inherit",
+    display: "flex",
+    flex: "0 0 auto",
+    gap: "4px",
+    minWidth: 0,
+    padding: "0 4px",
+  },
+  footerLeft: {
+    alignItems: "center",
+    display: "flex",
+    flex: "0 0 auto",
+    padding: "4px 8px",
   },
   shellTitleBlock: {
     display: "flex",

@@ -50,6 +50,7 @@ interface ReaderPanelState {
   reader: ReaderWebAIReaderLike;
   readerDocument: Document;
   readerWindow: Window;
+  resizeHandle: HTMLElement;
   resizeObserver: ResizeObserver | null;
   rail: HTMLElement | null;
 }
@@ -65,7 +66,8 @@ const LAYOUT_HOST_CLASS = "zotero-webai-reader-layout-host";
 const LAYOUT_FRAME_CLASS = "zotero-webai-reader-layout-frame";
 const DEFAULT_PANEL_WIDTH = 440;
 const MIN_PANEL_WIDTH = 320;
-const MAX_PANEL_WIDTH = 720;
+const MAX_PANEL_WIDTH = 960;
+const MIN_READER_CONTENT_WIDTH = 520;
 const ICON_SRC = `chrome://${config.addonRef}/content/icons/icon-20.png`;
 const READER_SIDE_NAV_SELECTORS = [
   "#zotero-context-pane-sidenav",
@@ -144,12 +146,13 @@ export function ensureReaderWebAIPanel(
   ensureHostStyle(hostDocument);
 
   const panel = createPanel(hostDocument);
+  const resizeHandle = createResizeHandle(hostDocument);
   const closeButton = createCloseButton(hostDocument);
   const reactRootElement = createHTMLElement(hostDocument, "div");
   reactRootElement.id = PANEL_ROOT_ID;
   reactRootElement.className = "zotero-webai-reader-panel-root ai-assistant-pane";
 
-  panel.append(closeButton, reactRootElement);
+  panel.append(resizeHandle, closeButton, reactRootElement);
   parent.appendChild(panel);
 
   const navButton = createReaderButton(hostDocument);
@@ -186,10 +189,12 @@ export function ensureReaderWebAIPanel(
     reader,
     readerDocument: doc,
     readerWindow,
+    resizeHandle,
     resizeObserver: null,
     rail: null,
   };
 
+  installResizeHandle(state);
   closeButton.addEventListener("click", () => {
     setReaderPanelOpen(state, false);
   });
@@ -386,6 +391,15 @@ function createCloseButton(doc: Document): HTMLElement {
   return button;
 }
 
+function createResizeHandle(doc: Document): HTMLElement {
+  const handle = createHTMLElement(doc, "div");
+  handle.className = "zotero-webai-reader-panel-resize-handle";
+  handle.setAttribute("aria-label", "Resize Zotero WebAI panel");
+  handle.setAttribute("role", "separator");
+  handle.setAttribute("title", "Drag to resize Zotero WebAI");
+  return handle;
+}
+
 function createReaderButton(doc: Document): HTMLElement {
   const button = createHTMLElement(doc, "button");
   button.id = READER_BUTTON_ID;
@@ -400,6 +414,77 @@ function createReaderButton(doc: Document): HTMLElement {
   icon.src = ICON_SRC;
   button.appendChild(icon);
   return button;
+}
+
+function installResizeHandle(state: ReaderPanelState): void {
+  state.resizeHandle.addEventListener("dblclick", () => {
+    setPanelWidth(state, DEFAULT_PANEL_WIDTH);
+  });
+
+  state.resizeHandle.addEventListener("mousedown", (event: Event) => {
+    const mouseEvent = event as MouseEvent;
+    if (mouseEvent.button !== 0) {
+      return;
+    }
+    event.preventDefault();
+    const startX = mouseEvent.clientX;
+    const startWidth = getPanelWidth(state);
+    const win = state.hostDocument.defaultView || state.mainWindow;
+    const doc = state.hostDocument;
+    const root = doc.documentElement;
+    if (!root) {
+      return;
+    }
+
+    const handleMove = (moveEvent: MouseEvent) => {
+      moveEvent.preventDefault();
+      const delta = startX - moveEvent.clientX;
+      setPanelWidth(state, startWidth + delta);
+    };
+    const handleUp = () => {
+      root.classList.remove("zotero-webai-reader-panel-resizing");
+      win.removeEventListener("mousemove", handleMove, true);
+      win.removeEventListener("mouseup", handleUp, true);
+    };
+
+    root.classList.add("zotero-webai-reader-panel-resizing");
+    win.addEventListener("mousemove", handleMove, true);
+    win.addEventListener("mouseup", handleUp, true);
+  });
+}
+
+function getPanelWidth(state: ReaderPanelState): number {
+  const rect = state.panel.getBoundingClientRect?.();
+  if (rect && Number.isFinite(rect.width) && rect.width > 0) {
+    return rect.width;
+  }
+  return DEFAULT_PANEL_WIDTH;
+}
+
+function setPanelWidth(state: ReaderPanelState, width: number): void {
+  const maxWidth = getMaxPanelWidth(state);
+  const nextWidth = clampPanelWidth(width, maxWidth);
+  state.panel.style.flex = `0 0 ${nextWidth}px`;
+  state.panel.style.width = `${nextWidth}px`;
+  state.panel.style.maxWidth = `${maxWidth}px`;
+}
+
+function getMaxPanelWidth(state: ReaderPanelState): number {
+  const parentRect = (state.parent as HTMLElement).getBoundingClientRect?.();
+  if (!parentRect || !Number.isFinite(parentRect.width) || parentRect.width <= 0) {
+    return MAX_PANEL_WIDTH;
+  }
+  return Math.max(
+    MIN_PANEL_WIDTH,
+    Math.min(MAX_PANEL_WIDTH, parentRect.width - MIN_READER_CONTENT_WIDTH),
+  );
+}
+
+function clampPanelWidth(width: number, maxWidth: number): number {
+  if (!Number.isFinite(width)) {
+    return DEFAULT_PANEL_WIDTH;
+  }
+  return Math.round(Math.max(MIN_PANEL_WIDTH, Math.min(maxWidth, width)));
 }
 
 function ensureReaderButtonPlacement(state: ReaderPanelState): void {
@@ -697,17 +782,20 @@ function applyEmbeddedReaderLayout(state: ReaderPanelState): void {
   parent.classList.add(LAYOUT_HOST_CLASS);
   iframe.style.boxSizing = "border-box";
   iframe.style.display = "block";
-  iframe.style.flex = "1 1 auto";
+  iframe.style.flex = "1 1 0";
   iframe.style.height = "100%";
   iframe.style.marginRight = "0";
   iframe.style.maxWidth = "none";
   iframe.style.minWidth = "0";
   iframe.style.order = "0";
-  iframe.style.width = "auto";
+  iframe.style.width = "0";
   iframe.classList.add(LAYOUT_FRAME_CLASS);
   state.panel.style.order = "2";
   if (state.rail?.dataset.placement === "embedded") {
     state.rail.style.order = "3";
+  }
+  if (!state.panel.hidden) {
+    setPanelWidth(state, getPanelWidth(state));
   }
   applyReaderContentCompaction(state);
 }
@@ -913,16 +1001,52 @@ function ensureHostStyle(doc: Document): void {
       flex-direction: column;
       flex: 0 0 min(${DEFAULT_PANEL_WIDTH}px, 44%);
       height: 100%;
-      max-width: min(${MAX_PANEL_WIDTH}px, 58%);
+      max-width: min(${MAX_PANEL_WIDTH}px, 76%);
       min-width: ${MIN_PANEL_WIDTH}px;
       overflow: hidden;
       position: relative;
-      resize: horizontal;
+      resize: none;
       width: min(${DEFAULT_PANEL_WIDTH}px, 44%);
       z-index: 1;
     }
     #${PANEL_ID}.zotero-webai-reader-panel > * {
       direction: ltr;
+    }
+    .zotero-webai-reader-panel-resize-handle {
+      bottom: 0;
+      cursor: ew-resize;
+      left: 0;
+      position: absolute;
+      top: 0;
+      touch-action: none;
+      width: 10px;
+      z-index: 4;
+    }
+    .zotero-webai-reader-panel-resize-handle::after {
+      background: color-mix(in srgb, Highlight 38%, CanvasText 12%);
+      border-radius: 999px;
+      bottom: 16px;
+      content: "";
+      left: 1px;
+      opacity: 0;
+      position: absolute;
+      top: 16px;
+      transition: opacity 120ms ease;
+      width: 2px;
+    }
+    .zotero-webai-reader-panel-resize-handle:hover::after,
+    html.zotero-webai-reader-panel-resizing
+      .zotero-webai-reader-panel-resize-handle::after {
+      opacity: 1;
+    }
+    html.zotero-webai-reader-panel-resizing,
+    html.zotero-webai-reader-panel-resizing * {
+      cursor: ew-resize !important;
+      user-select: none !important;
+    }
+    html.zotero-webai-reader-panel-resizing iframe,
+    html.zotero-webai-reader-panel-resizing .zotero-webai-reader-layout-frame {
+      pointer-events: none !important;
     }
     .zotero-webai-reader-panel-root {
       box-sizing: border-box;
@@ -1037,7 +1161,7 @@ function ensureHostStyle(doc: Document): void {
       bottom: auto !important;
       box-sizing: border-box !important;
       display: block !important;
-      flex: 1 1 auto !important;
+      flex: 1 1 0 !important;
       height: 100% !important;
       inset: auto !important;
       left: auto !important;
@@ -1050,7 +1174,7 @@ function ensureHostStyle(doc: Document): void {
       position: relative !important;
       right: auto !important;
       top: auto !important;
-      width: auto !important;
+      width: 0 !important;
       z-index: auto !important;
     }
   `;

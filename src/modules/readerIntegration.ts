@@ -1,3 +1,5 @@
+import React from "react";
+import { createRoot } from "react-dom/client";
 import type { ReaderActionDetail } from "../ui/readerActionFlow";
 import { config } from "../../package.json";
 import { getReaderCurrentPage, getReaderSelectedText } from "./readerPrivate";
@@ -6,6 +8,8 @@ import { UIFactory } from "../ui/ui";
 import { getSettings } from "../services/settingsManager";
 import { EventBus } from "../utils/eventBus";
 import { syncActiveReaderWebAIPanel } from "./readerWebAIPanel";
+import { SelectionToolbar } from "../ui/components/SelectionToolbar";
+import { getSidebarTheme } from "../ui/theme";
 
 type ReaderSelectionPopupEvent = Parameters<
   typeof Zotero.Reader.registerEventListener<"renderTextSelectionPopup">
@@ -35,6 +39,7 @@ interface ReaderLike {
 }
 
 const TOOLBAR_BUTTON_ID = "zotero-webai-reader-toolbar-button";
+const TABBAR_BUTTON_ID = "zotero-webai-reader-tabbar-button";
 const ICON_SRC = `chrome://${config.addonRef}/content/icons/icon-20.png`;
 
 function isChineseLocale(): boolean {
@@ -59,6 +64,89 @@ let toolbarHandler:
   | ((event: ReaderToolbarEvent) => void | Promise<void>)
   | null = null;
 let settingsHandler: ((event: Event) => void) | null = null;
+let tabbarObserver: MutationObserver | null = null;
+
+let activeDocSelectionListener: {
+  doc: Document;
+  handler: () => void;
+} | null = null;
+
+function dismissSelectionToolbar(doc: Document) {
+  const mountPoint = doc.getElementById("zotero-webai-selection-toolbar-mount");
+  if (mountPoint) {
+    const root = (mountPoint as any)._reactRoot;
+    if (root) {
+      try {
+        root.unmount();
+      } catch (err) {
+        // Ignore unmount errors
+      }
+      (mountPoint as any)._reactRoot = null;
+    }
+    mountPoint.remove();
+  }
+}
+
+function showSelectionToolbar(
+  text: string,
+  rect: DOMRect,
+  doc: Document,
+  page: number,
+  readerItemID: number,
+  reader: ReaderLike,
+) {
+  const settings = getSettings();
+  if (settings.selectionToolbarEnabled === false) {
+    return;
+  }
+
+  let mountPoint = doc.getElementById("zotero-webai-selection-toolbar-mount");
+  if (!mountPoint) {
+    mountPoint = doc.createElement("div");
+    mountPoint.id = "zotero-webai-selection-toolbar-mount";
+    if (doc.body) {
+      doc.body.appendChild(mountPoint);
+    } else {
+      return;
+    }
+  }
+
+  const position = {
+    top: rect.top,
+    left: rect.left + rect.width / 2,
+  };
+
+  const mainWindow = Zotero.getMainWindow();
+  const themeMode = settings.themeMode || "auto";
+  const theme = getSidebarTheme(mainWindow, themeMode);
+  const zh = isChineseLocale();
+
+  let root = (mountPoint as any)._reactRoot;
+  if (!root) {
+    root = createRoot(mountPoint);
+    (mountPoint as any)._reactRoot = root;
+  }
+
+  const onAction = (actionId: string, selectedText: string) => {
+    dispatchReaderAction(actionId as any, selectedText, page, readerItemID, reader, doc);
+    dismissSelectionToolbar(doc);
+  };
+
+  const onDismiss = () => {
+    dismissSelectionToolbar(doc);
+  };
+
+  root.render(
+    React.createElement(SelectionToolbar, {
+      selectedText: text,
+      position,
+      theme,
+      isZh: zh,
+      onAction,
+      onDismiss,
+    })
+  );
+}
 
 function dispatchReaderAction(
   action: ReaderActionDetail["action"],
@@ -192,40 +280,91 @@ function onRenderTextSelectionPopup(event: ReaderSelectionPopupEvent): void {
     surface: "reader",
   });
 
-  const container = doc.createElement("div");
-  container.className = "ai-assistant-selection-popup";
-  container.style.cssText = "display: flex; flex-direction: column; gap: 2px;";
-  const zh = isChineseLocale();
+  const sel = doc.getSelection();
+  let rect: DOMRect | null = null;
+  if (sel && sel.rangeCount > 0) {
+    rect = sel.getRangeAt(0).getBoundingClientRect();
+  }
 
-  const label = doc.createElement("span");
-  label.textContent = "Zotero WebAI";
-  label.style.cssText =
-    "font-size: 0.92em; color: inherit; opacity: 0.72; user-select: none; padding-left: 4px;";
-  container.appendChild(label);
+  const mainWindow = Zotero.getMainWindow?.();
+  const eventBus = (mainWindow as any)?.__aiAssistantEventBus;
+  if (eventBus && mainWindow) {
+    eventBus.dispatchEvent(
+      new mainWindow.CustomEvent("selectionTextUpdate", {
+        detail: { text: annotationText },
+      }),
+    );
+  }
 
-  const row = doc.createElement("div");
-  row.style.cssText = "display: flex; gap: 4px;";
+  if (activeDocSelectionListener) {
+    activeDocSelectionListener.doc.removeEventListener(
+      "selectionchange",
+      activeDocSelectionListener.handler
+    );
+    activeDocSelectionListener = null;
+  }
 
-  const explainBtn = doc.createElement("button");
-  explainBtn.className = "toolbar-button wide-button";
-  explainBtn.style.cssText = "flex: 1;";
-  explainBtn.textContent = zh ? "解释" : "Explain";
-  explainBtn.addEventListener("click", () => {
-    dispatchReaderAction("explain", annotationText, page, readerItemID, reader, doc);
-  });
+  const onSelectionChange = () => {
+    const currentSel = doc.getSelection();
+    if (!currentSel || currentSel.isCollapsed || !currentSel.toString().trim()) {
+      if (eventBus && mainWindow) {
+        eventBus.dispatchEvent(
+          new mainWindow.CustomEvent("selectionTextUpdate", {
+            detail: { text: "" },
+          }),
+        );
+      }
+      dismissSelectionToolbar(doc);
+      doc.removeEventListener("selectionchange", onSelectionChange);
+      if (activeDocSelectionListener?.handler === onSelectionChange) {
+        activeDocSelectionListener = null;
+      }
+    }
+  };
+  doc.addEventListener("selectionchange", onSelectionChange);
+  activeDocSelectionListener = { doc, handler: onSelectionChange };
 
-  const askBtn = doc.createElement("button");
-  askBtn.className = "toolbar-button wide-button";
-  askBtn.style.cssText = "flex: 1;";
-  askBtn.textContent = zh ? "提问..." : "Ask...";
-  askBtn.addEventListener("click", () => {
-    dispatchReaderAction("ask", annotationText, page, readerItemID, reader, doc);
-  });
+  const settings = getSettings();
+  if (settings.selectionToolbarEnabled !== false) {
+    if (rect) {
+      showSelectionToolbar(annotationText, rect, doc, page, readerItemID, reader);
+    }
+  } else {
+    const container = doc.createElement("div");
+    container.className = "ai-assistant-selection-popup";
+    container.style.cssText = "display: flex; flex-direction: column; gap: 2px;";
+    const zh = isChineseLocale();
 
-  row.appendChild(explainBtn);
-  row.appendChild(askBtn);
-  container.appendChild(row);
-  append(container);
+    const label = doc.createElement("span");
+    label.textContent = "Zotero WebAI";
+    label.style.cssText =
+      "font-size: 0.92em; color: inherit; opacity: 0.72; user-select: none; padding-left: 4px;";
+    container.appendChild(label);
+
+    const row = doc.createElement("div");
+    row.style.cssText = "display: flex; gap: 4px;";
+
+    const explainBtn = doc.createElement("button");
+    explainBtn.className = "toolbar-button wide-button";
+    explainBtn.style.cssText = "flex: 1;";
+    explainBtn.textContent = zh ? "解释" : "Explain";
+    explainBtn.addEventListener("click", () => {
+      dispatchReaderAction("explain", annotationText, page, readerItemID, reader, doc);
+    });
+
+    const askBtn = doc.createElement("button");
+    askBtn.className = "toolbar-button wide-button";
+    askBtn.style.cssText = "flex: 1;";
+    askBtn.textContent = zh ? "提问..." : "Ask...";
+    askBtn.addEventListener("click", () => {
+      dispatchReaderAction("ask", annotationText, page, readerItemID, reader, doc);
+    });
+
+    row.appendChild(explainBtn);
+    row.appendChild(askBtn);
+    container.appendChild(row);
+    append(container);
+  }
 }
 
 function onCreateViewContextMenu(event: ReaderViewContextMenuEvent): void {
@@ -314,6 +453,39 @@ function onRenderToolbar(event: ReaderToolbarEvent): void {
   syncActiveReaderWebAIEntrypoints(doc, append);
 }
 
+
+function ensureReaderTabbarButton(): boolean {
+  const mainWindow = Zotero.getMainWindow?.() as Window | null;
+  const doc = mainWindow?.document;
+  if (!mainWindow || !doc) {
+    return false;
+  }
+
+  const existing = doc.getElementById(TABBAR_BUTTON_ID) as HTMLElement | null;
+  const iconPlacement = getSettings().iconPlacement;
+  const shouldShow = shouldShowToolbarIcon(iconPlacement) && Boolean(getActiveReader());
+  if (!shouldShow) {
+    existing?.remove();
+    return false;
+  }
+
+  const tabbar = findMainTabbar(doc);
+  if (!tabbar) {
+    return false;
+  }
+
+  const button = existing || createTabbarButton(doc, mainWindow);
+  const anchor = findTabbarDropdownAnchor(tabbar);
+  if (anchor && anchor !== button) {
+    if (button.parentElement !== tabbar || button.nextSibling !== anchor) {
+      tabbar.insertBefore(button, anchor);
+    }
+  } else if (button.parentElement !== tabbar) {
+    tabbar.appendChild(button);
+  }
+  return true;
+}
+
 function ensureReaderToolbarButton(
   doc: Document,
   append?: (...nodes: unknown[]) => void,
@@ -321,12 +493,13 @@ function ensureReaderToolbarButton(
   const mainWindow = Zotero.getMainWindow?.();
   const existing = doc.getElementById(TOOLBAR_BUTTON_ID) as HTMLElement | null;
   const iconPlacement = getSettings().iconPlacement;
-  if (!shouldShowToolbarIcon(iconPlacement)) {
+  const tabbarButtonReady = ensureReaderTabbarButton();
+  if (!shouldShowToolbarIcon(iconPlacement) || tabbarButtonReady) {
     existing?.remove();
     return;
   }
   if (existing) {
-    moveToolbarButtonToMiddle(doc, existing);
+    positionReaderToolbarButton(doc, existing);
     return;
   }
 
@@ -354,7 +527,7 @@ function ensureReaderToolbarButton(
     const toolbar = findReaderToolbar(doc);
     toolbar?.appendChild(button);
   }
-  moveToolbarButtonToMiddle(doc, button);
+  positionReaderToolbarButton(doc, button);
 }
 
 function shouldShowToolbarIcon(iconPlacement: string): boolean {
@@ -366,8 +539,9 @@ function syncActiveReaderWebAIEntrypoints(
   append?: (...nodes: unknown[]) => void,
 ): void {
   const reader = getActiveReader();
+  const tabbarButtonReady = ensureReaderTabbarButton();
   const readerDoc = doc || reader?._iframeWindow?.document || null;
-  if (readerDoc) {
+  if (readerDoc && !tabbarButtonReady) {
     ensureReaderToolbarButton(readerDoc, append);
   }
   syncActiveReaderWebAIPanel();
@@ -394,15 +568,188 @@ function getActiveReader(): ReaderLike | null {
   return Zotero.Reader.getByTabID(selectedID) as ReaderLike | null;
 }
 
-function moveToolbarButtonToMiddle(doc: Document, button: HTMLElement): void {
-  const toolbar = findReaderToolbar(doc);
-  if (!toolbar || button.parentElement !== toolbar) {
+
+function createTabbarButton(doc: Document, mainWindow: Window): HTMLElement {
+  const button = doc.createElement("button");
+  button.id = TABBAR_BUTTON_ID;
+  button.className = "zotero-webai-reader-toolbar-button zotero-webai-reader-tabbar-button";
+  button.type = "button";
+  button.title = "Zotero WebAI";
+  button.setAttribute("aria-label", "Zotero WebAI");
+
+  const icon = doc.createElement("img");
+  icon.alt = "";
+  icon.src = ICON_SRC;
+  button.appendChild(icon);
+
+  button.addEventListener("click", () => {
+    void UIFactory.openSidebarFromReaderToolbar(mainWindow);
+  });
+  return button;
+}
+
+function findMainTabbar(doc: Document): HTMLElement | null {
+  const selectors = [
+    "#tabs-container",
+    "#zotero-tabs",
+    "#zotero-tabbar",
+    "#tab-bar",
+    "#tabs",
+    ".tabs-container",
+    ".zotero-tabs",
+    ".tab-strip",
+    "[role='tablist']",
+  ];
+  for (const selector of selectors) {
+    const candidate = doc.querySelector(selector) as HTMLElement | null;
+    if (isUsableMainTabbar(candidate)) {
+      return candidate;
+    }
+  }
+
+  const tabs = Array.from(doc.querySelectorAll("[role='tab'],.tab,[class*='tab']")) as HTMLElement[];
+  for (const tab of tabs) {
+    let current = tab.parentElement as HTMLElement | null;
+    let depth = 0;
+    while (current && depth < 5) {
+      if (isUsableMainTabbar(current)) {
+        return current;
+      }
+      current = (current as HTMLElement).parentElement as HTMLElement | null;
+      depth += 1;
+    }
+  }
+
+  const menuLike = Array.from(
+    doc.querySelectorAll(
+      "[id*='tabs'][id*='menu'],[id*='tab'][id*='menu'],[class*='tabs-menu'],[class*='alltabs'],[class*='tab'][class*='dropdown'],[class*='tab'][class*='overflow']",
+    ),
+  ) as HTMLElement[];
+  for (const anchor of menuLike) {
+    const parent = anchor.parentElement as HTMLElement | null;
+    if (isUsableMainTabbar(parent)) {
+      return parent;
+    }
+  }
+  return null;
+}
+
+function isUsableMainTabbar(element?: HTMLElement | null): element is HTMLElement {
+  if (!element) {
+    return false;
+  }
+  const rect = element.getBoundingClientRect?.();
+  if (!rect || rect.width < 240 || rect.height < 20 || rect.height > 76) {
+    return false;
+  }
+  const descriptor = [
+    element.id,
+    element.className,
+    element.getAttribute("role"),
+    element.getAttribute("aria-label"),
+  ]
+    .join(" ")
+    .toLowerCase();
+  return Boolean(
+    /tab|tabs/.test(descriptor) ||
+      element.querySelector("[role='tab'],.tab,[class*='tab']"),
+  );
+}
+
+function findTabbarDropdownAnchor(tabbar: HTMLElement): Element | null {
+  const selectors = [
+    "#tabs-menu-button",
+    "#alltabs-button",
+    "#zotero-tabs-menu",
+    "[id*='tabs'][id*='menu']",
+    "[id*='tab'][id*='menu']",
+    "[data-l10n-id*='tabs-menu']",
+    "[aria-label*='tabs']",
+    "[aria-label*='Tabs']",
+    "[title*='tabs']",
+    "[title*='Tabs']",
+    "[class*='tabs-menu']",
+    "[class*='alltabs']",
+    "[class*='overflow']",
+    "[class*='dropdown']",
+    "[class*='dropmarker']",
+    "[class*='chevron']",
+  ];
+  for (const selector of selectors) {
+    const match = tabbar.querySelector(selector);
+    if (match && match.id !== TABBAR_BUTTON_ID) {
+      return (match.closest("button,toolbarbutton,[role='button'],div,span") || match) as Element;
+    }
+  }
+  const controls = (Array.from(
+    tabbar.querySelectorAll("button,toolbarbutton,[role='button']"),
+  ) as Element[]).filter((element) => element.id !== TABBAR_BUTTON_ID);
+  return controls[controls.length - 1] || null;
+}
+
+function positionReaderToolbarButton(doc: Document, button: HTMLElement): void {
+  const parent = button.parentElement;
+  if (!parent) {
+    const win = doc.defaultView;
+    if (win) {
+      win.setTimeout(() => {
+        positionReaderToolbarButton(doc, button);
+      }, 0);
+    } else {
+      (globalThis as any).setTimeout(() => {
+        positionReaderToolbarButton(doc, button);
+      }, 0);
+    }
     return;
   }
 
-  const anchor = findMiddleToolbarAnchor(toolbar);
-  if (anchor && anchor !== button && anchor.nextSibling !== button) {
-    toolbar.insertBefore(button, anchor.nextSibling);
+  const toolbar = findReaderToolbar(doc);
+  if (parent === toolbar) {
+    const anchor = findMiddleToolbarAnchor(toolbar);
+    if (anchor && anchor !== button && anchor.nextSibling !== button) {
+      toolbar.insertBefore(button, anchor.nextSibling);
+    }
+    return;
+  }
+
+  const positionButton = () => {
+    const translateButton = Array.from(parent.children).find((child) => {
+      if (child === button) return false;
+      const id = child.id?.toLowerCase() || "";
+      const className = child.className?.toLowerCase() || "";
+      const title = child.getAttribute("title")?.toLowerCase() || "";
+      const label = child.getAttribute("aria-label")?.toLowerCase() || "";
+      return (
+        id.includes("translate") ||
+        className.includes("translate") ||
+        title.includes("translate") ||
+        title.includes("翻译") ||
+        label.includes("translate") ||
+        label.includes("翻译")
+      );
+    });
+    if (translateButton && button.nextSibling !== translateButton) {
+      parent.insertBefore(button, translateButton);
+    }
+  };
+
+  positionButton();
+
+  const MutationObserverClass = doc.defaultView?.MutationObserver || globalThis.MutationObserver;
+  if (typeof MutationObserverClass === "function") {
+    const existingObserver = (button as any)._siblingObserver;
+    if (existingObserver) {
+      try {
+        existingObserver.disconnect();
+      } catch (e) {
+        // ignore
+      }
+    }
+    const observer = new MutationObserverClass(() => {
+      positionButton();
+    });
+    observer.observe(parent, { childList: true });
+    (button as any)._siblingObserver = observer;
   }
 }
 
@@ -469,6 +816,9 @@ export function initReaderIntegration(): void {
   toolbarHandler = onRenderToolbar;
   settingsHandler = () => {
     syncActiveReaderWebAIEntrypoints();
+    Zotero.getMainWindow?.()?.setTimeout?.(() => {
+      syncActiveReaderWebAIEntrypoints();
+    }, 100);
   };
 
   Zotero.Reader.registerEventListener(
@@ -487,6 +837,8 @@ export function initReaderIntegration(): void {
     config.addonID,
   );
   EventBus.getInstance().addEventListener("settingsChange", settingsHandler);
+  ensureReaderTabbarButton();
+  installTabbarObserver();
 
   debugLog.info("reader.integration.registered", {
     surface: "reader",
@@ -495,6 +847,18 @@ export function initReaderIntegration(): void {
 }
 
 export function cleanupReaderIntegration(): void {
+  if (activeDocSelectionListener) {
+    try {
+      activeDocSelectionListener.doc.removeEventListener(
+        "selectionchange",
+        activeDocSelectionListener.handler
+      );
+      dismissSelectionToolbar(activeDocSelectionListener.doc);
+    } catch {
+      // Ignore cleanup issues
+    }
+    activeDocSelectionListener = null;
+  }
   if (popupHandler) {
     Zotero.Reader.unregisterEventListener("renderTextSelectionPopup", popupHandler);
     popupHandler = null;
@@ -511,4 +875,34 @@ export function cleanupReaderIntegration(): void {
     EventBus.getInstance().removeEventListener("settingsChange", settingsHandler);
     settingsHandler = null;
   }
+  tabbarObserver?.disconnect();
+  tabbarObserver = null;
+  Zotero.getMainWindow?.()?.document?.getElementById(TABBAR_BUTTON_ID)?.remove();
+}
+
+function installTabbarObserver(): void {
+  const mainWindow = Zotero.getMainWindow?.() as Window | null;
+  const doc = mainWindow?.document;
+  if (!mainWindow || !doc || tabbarObserver) {
+    return;
+  }
+  const MutationObserverClass =
+    mainWindow.MutationObserver || globalThis.MutationObserver;
+  if (typeof MutationObserverClass !== "function") {
+    return;
+  }
+  const root = doc.documentElement;
+  if (!root) {
+    return;
+  }
+  const observer = new MutationObserverClass(() => {
+    ensureReaderTabbarButton();
+  });
+  observer.observe(root, {
+    attributeFilter: ["class", "selected", "aria-selected", "hidden"],
+    attributes: true,
+    childList: true,
+    subtree: true,
+  });
+  tabbarObserver = observer;
 }

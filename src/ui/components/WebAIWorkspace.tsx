@@ -19,7 +19,7 @@ import { getSidebarTheme, type SidebarTheme } from "../theme";
 import { typography } from "../typography";
 
 type WebAIServiceId = "deepseek" | "zai" | "chatgpt";
-type PromptSourceMode = "paper" | "selection";
+type PromptSourceMode = "paper" | "selection" | "quick-prompt";
 type WebAICommandKind =
   | "clear"
   | "export"
@@ -1463,6 +1463,7 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     setComposerImage(null);
     setStatus(text.status.imageRemoved);
     setIsError(false);
+    void removeWebChatComposerImages(frameRef.current);
   };
 
   const runSessionSlashCommand = async (command: SessionSlashCommand) => {
@@ -3065,6 +3066,86 @@ async function insertPromptIntoWebChat(
   return scriptedResult;
 }
 
+async function removeWebChatComposerImages(frame: Element | null): Promise<void> {
+  if (!frame) {
+    return;
+  }
+  try {
+    const doc = (frame as HTMLIFrameElement).contentWindow?.document;
+    if (doc) {
+      removeImagesFromDocument(doc);
+    } else {
+      await removeImagesWithFrameScript(frame);
+    }
+  } catch (error) {
+    // ignore
+  }
+}
+
+async function removeImagesWithFrameScript(frame: Element): Promise<void> {
+  const messageManager = getFrameMessageManager(frame);
+  if (typeof messageManager?.loadFrameScript !== "function") {
+    return;
+  }
+
+  const source = `
+    (function() {
+      ${findWebChatComposer.toString()}
+      ${removeImagesFromDocument.toString()}
+      removeImagesFromDocument(content.document);
+    })();
+  `;
+
+  try {
+    messageManager.loadFrameScript(
+      `data:application/javascript;charset=utf-8,${encodeURIComponent(source)}`,
+      false,
+    );
+  } catch (error) {
+    // ignore
+  }
+}
+
+function removeImagesFromDocument(doc: Document): void {
+  const composer = findWebChatComposer(doc);
+  if (!composer) {
+    return;
+  }
+  const wrapper =
+    (composer.closest(
+      "form, [class*='composer'], [class*='input'], [class*='chat-input'], [class*='prompt']",
+    ) || doc.body || doc.documentElement) as Element;
+
+  const selectors = [
+    "button[aria-label*='Remove']",
+    "button[aria-label*='Delete']",
+    "button[aria-label*='clear']",
+    "button[aria-label*='移除']",
+    "button[aria-label*='删除']",
+    "button[aria-label*='清除']",
+    "[data-testid='remove-file']",
+    "[class*='close'] button",
+    "[class*='Close'] button",
+    "button [class*='close']",
+    "button [class*='Close']",
+    "[class*='remove']",
+    "[class*='delete']",
+  ];
+
+  for (const selector of selectors) {
+    try {
+      const buttons = wrapper.querySelectorAll(selector);
+      Array.from(buttons).forEach((btn: any) => {
+        if (btn instanceof HTMLElement && btn !== composer) {
+          btn.click();
+        }
+      });
+    } catch (e) {
+      // ignore
+    }
+  }
+}
+
 async function submitFocusedWebChatWithHostKeyboard(
   frame: Element,
   prompt: string,
@@ -3556,12 +3637,10 @@ async function insertPromptIntoDocument(
   attachments: ComposerImageAttachment[] = [],
   pasteImageFromNativeClipboard = false,
 ): Promise<PromptInsertResult> {
-  const composer = findWebChatComposer(doc);
+  let composer = findWebChatComposer(doc);
   if (!composer) {
     return { ok: false, method, reason: "composer-not-found" };
   }
-  writePromptToComposer(composer, prompt);
-  await waitForPromptHydration(doc, composer, prompt);
   if (attachments.length) {
     await attachImagesToWebChatComposer(
       doc,
@@ -3569,7 +3648,10 @@ async function insertPromptIntoDocument(
       attachments,
       pasteImageFromNativeClipboard,
     );
+    composer = findWebChatComposer(doc) || composer;
   }
+  writePromptToComposer(composer, prompt);
+  await waitForPromptHydration(doc, composer, prompt);
   const submitted = submit
     ? await submitWebChatPrompt(doc, composer, prompt, attachments.length > 0)
     : false;
@@ -3980,7 +4062,7 @@ function elementHasMarkdownStructure(element: Element): boolean {
   return Boolean(
     element.querySelector("[data-zotero-webai-thinking='true']") ||
     element.querySelector(
-      "h1,h2,h3,h4,h5,h6,p,ul,ol,li,table,thead,tbody,tr,th,td,blockquote,pre,code,strong,b,em,i,a",
+      "h1,h2,h3,h4,h5,h6,p,ul,ol,li,table,thead,tbody,tr,th,td,blockquote,pre,code,strong,b,em,i,a,img,picture",
     ),
   );
 }
@@ -4345,7 +4427,7 @@ function isMarkdownBlockNode(node: Node): boolean {
     return true;
   }
   const tag = (node as Element).tagName.toLowerCase();
-  return /^(h[1-6]|p|ul|ol|li|table|blockquote|pre|section|article|img)$/.test(tag);
+  return /^(h[1-6]|p|ul|ol|li|table|blockquote|pre|section|article|img|picture)$/.test(tag);
 }
 
 function serializeListMarkdown(
@@ -4508,23 +4590,61 @@ function serializeInlineMarkdownNode(node: Node): string {
 
 function serializeImageMarkdown(element: Element): string {
   const image = element as HTMLImageElement;
-  const src = (
+  let src = (
     image.currentSrc ||
     image.src ||
     element.getAttribute("src") ||
     element.getAttribute("data-src") ||
     ""
   ).trim();
-  if (!isRenderableImageURL(src)) {
+  if (!src) {
     return "";
   }
+
+  const doc = element.ownerDocument;
+  if (!doc) {
+    return "";
+  }
+
+  // Resolve relative URLs to absolute URLs relative to the document
+  try {
+    const baseURI = doc.baseURI || doc.location?.href;
+    if (baseURI) {
+      src = new URL(src, baseURI).href;
+    }
+  } catch (e) {
+    // ignore
+  }
+
+  // Try to convert to base64 Data URL to handle blob URLs and session-restricted images
+  let dataURL = "";
+  try {
+    if (image.naturalWidth > 0 && image.naturalHeight > 0) {
+      const canvas = doc.createElement("canvas");
+      canvas.width = image.naturalWidth;
+      canvas.height = image.naturalHeight;
+      const ctx = canvas.getContext("2d") as any;
+      if (ctx) {
+        ctx.drawImage(image, 0, 0);
+        dataURL = canvas.toDataURL("image/png");
+      }
+    }
+  } catch (e) {
+    // ignore SecurityError for cross-origin tainted canvas
+  }
+
+  const finalSrc = dataURL || src;
+  if (!isRenderableImageURL(finalSrc)) {
+    return "";
+  }
+
   const alt = escapeMarkdownImageText(
     element.getAttribute("alt") ||
       element.getAttribute("aria-label") ||
       element.getAttribute("title") ||
       "image",
   );
-  return `![${alt}](${escapeMarkdownImageURL(src)})`;
+  return `![${alt}](${escapeMarkdownImageURL(finalSrc)})`;
 }
 
 function isRenderableImageURL(value: string): boolean {
@@ -4840,18 +4960,54 @@ async function attachImagesToWebChatComposer(
   }
   focusComposerForSubmit(composer);
   if (pasteImageFromNativeClipboard && pasteNativeClipboardImageToComposer(doc, composer)) {
-    await sleepInDocument(doc, 1500);
-    return true;
-  }
-  if (assignImagesToNearestFileInput(doc, composer, files)) {
-    await sleepInDocument(doc, 900);
-    return true;
-  }
-  if (dispatchImagePasteToComposer(doc, composer, files)) {
+    await waitForComposerImageAttachment(doc, composer, 8000);
     await sleepInDocument(doc, 500);
     return true;
   }
+  if (assignImagesToNearestFileInput(doc, composer, files)) {
+    await waitForComposerImageAttachment(doc, composer, 8000);
+    await sleepInDocument(doc, 500);
+    return true;
+  }
+  if (dispatchImagePasteToComposer(doc, composer, files)) {
+    await waitForComposerImageAttachment(doc, composer, 6000);
+    await sleepInDocument(doc, 400);
+    return true;
+  }
   return false;
+}
+
+
+async function waitForComposerImageAttachment(
+  doc: Document,
+  composer: HTMLElement,
+  timeoutMs: number,
+): Promise<boolean> {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt <= timeoutMs) {
+    if (hasComposerImageAttachment(doc, composer)) {
+      return true;
+    }
+    await sleepInDocument(doc, 180);
+  }
+  return hasComposerImageAttachment(doc, composer);
+}
+
+function hasComposerImageAttachment(doc: Document, composer: HTMLElement): boolean {
+  const wrapper = getComposerAttachmentWrapper(doc, composer);
+  return Boolean(
+    wrapper.querySelector(
+      "img,canvas,picture,[data-testid*='attachment'],[data-testid*='file'],[class*='attachment'],[class*='upload'],[class*='file-preview'],[class*='image-preview']",
+    ),
+  );
+}
+
+function getComposerAttachmentWrapper(doc: Document, composer: HTMLElement): Element {
+  return (
+    composer.closest(
+      "form,[class*='composer'],[class*='input'],[class*='chat-input'],[class*='prompt'],[data-testid*='composer']",
+    ) || doc.body || doc.documentElement || composer
+  );
 }
 
 function createFileFromComposerImage(
@@ -5923,6 +6079,9 @@ ${activateComposerForNativeInput.toString()}
 ${replaceComposerSelectionWithPrompt.toString()}
 ${selectComposerContents.toString()}
 ${attachImagesToWebChatComposer.toString()}
+${waitForComposerImageAttachment.toString()}
+${hasComposerImageAttachment.toString()}
+${getComposerAttachmentWrapper.toString()}
 ${createFileFromComposerImage.toString()}
 ${dispatchImagePasteToComposer.toString()}
 ${pasteNativeClipboardImageToComposer.toString()}
@@ -9507,13 +9666,14 @@ const styles: Record<string, React.CSSProperties> = {
     whiteSpace: "break-spaces",
   },
   markdownImageLink: {
-    display: "block",
-    margin: "6px 0",
+    display: "inline-block",
+    margin: "6px 6px 6px 0",
     maxWidth: "100%",
+    verticalAlign: "middle",
   },
   markdownImage: {
     borderRadius: "6px",
-    display: "block",
+    display: "inline-block",
     height: "auto",
     maxHeight: "520px",
     maxWidth: "100%",
@@ -9595,10 +9755,9 @@ const styles: Record<string, React.CSSProperties> = {
     gap: "8px",
     minHeight: "150px",
     minWidth: 0,
-    overflow: "auto",
+    overflow: "visible",
     padding: "10px",
     position: "relative",
-    resize: "vertical",
     width: "100%",
   },
   compactComposerPanel: {
@@ -9610,15 +9769,19 @@ const styles: Record<string, React.CSSProperties> = {
   slashMenu: {
     border: "1px solid #e0e0e0",
     borderRadius: "12px",
-    boxShadow: "0 10px 24px rgba(0, 0, 0, 0.08)",
+    boxShadow: "0 -4px 24px rgba(0, 0, 0, 0.12)",
     boxSizing: "border-box",
     display: "flex",
     flexDirection: "column",
     maxHeight: "220px",
     overflow: "auto",
     padding: "6px",
-    position: "relative",
-    width: "100%",
+    position: "absolute",
+    bottom: "100%",
+    left: 0,
+    right: 0,
+    zIndex: 1000,
+    marginBottom: "8px",
   },
   skillOption: {
     alignItems: "center",

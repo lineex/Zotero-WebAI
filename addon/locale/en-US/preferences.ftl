@@ -45,3 +45,25 @@ ai-assistant-pref-sync-password-label = Password
 ai-assistant-pref-sync-test = Test
 ai-assistant-pref-sync-push = Upload
 ai-assistant-pref-sync-pull = Download
+
+
+ai-assistant-pref-theme-mode-label = Theme mode
+ai-assistant-pref-theme-mode-auto = Follow system
+ai-assistant-pref-theme-mode-light = Light
+ai-assistant-pref-theme-mode-dark = Dark
+
+ai-assistant-pref-thinking-effort-label = Default thinking effort
+ai-assistant-pref-thinking-effort-none = Off
+ai-assistant-pref-thinking-effort-low = Low
+ai-assistant-pref-thinking-effort-medium = Medium
+ai-assistant-pref-thinking-effort-high = High
+ai-assistant-pref-thinking-effort-xhigh = Extremely High
+
+ai-assistant-pref-selection-toolbar-label = Enable floating selection toolbar above selected PDF text
+ai-assistant-pref-token-display-label = Enable token usage display at the bottom bar
+ai-assistant-pref-quick-prompts-label = Enable quick prompts pill-buttons below scope bar
+
+ai-assistant-pref-selection-context-mode-label = Default PDF selection context
+ai-assistant-pref-selection-context-mode-selection = Selected text only
+ai-assistant-pref-selection-context-mode-full = Selected text + full text overview
+

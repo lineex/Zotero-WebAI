@@ -1,5 +1,85 @@
 /* Zotero WebAI styles */
 
+/* ─── CSS Custom Properties ──────────────────────────────────────── */
+
+:root {
+  --webai-transition-fast: 120ms cubic-bezier(0.4, 0, 0.2, 1);
+  --webai-transition-normal: 200ms cubic-bezier(0.4, 0, 0.2, 1);
+  --webai-transition-slow: 350ms cubic-bezier(0.4, 0, 0.2, 1);
+  --webai-transition-spring: 400ms cubic-bezier(0.16, 1, 0.3, 1);
+
+  --webai-shadow-sm: 0 1px 3px rgba(0, 0, 0, 0.06), 0 1px 2px rgba(0, 0, 0, 0.04);
+  --webai-shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08), 0 2px 4px rgba(0, 0, 0, 0.04);
+  --webai-shadow-lg: 0 8px 24px rgba(0, 0, 0, 0.12), 0 2px 8px rgba(0, 0, 0, 0.06);
+  --webai-shadow-xl: 0 12px 32px rgba(0, 0, 0, 0.16), 0 4px 12px rgba(0, 0, 0, 0.08);
+
+  --webai-radius-sm: 6px;
+  --webai-radius-md: 10px;
+  --webai-radius-lg: 14px;
+  --webai-radius-xl: 20px;
+  --webai-radius-full: 9999px;
+}
+
+/* ─── Keyframe Animations ────────────────────────────────────────── */
+
+@keyframes webai-fade-in {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes webai-fade-out {
+  from { opacity: 1; }
+  to   { opacity: 0; }
+}
+
+@keyframes webai-slide-up {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes webai-slide-down {
+  from { opacity: 0; transform: translateY(-8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes webai-scale-in {
+  from { opacity: 0; transform: scale(0.92); }
+  to   { opacity: 1; transform: scale(1); }
+}
+
+@keyframes webai-scale-out {
+  from { opacity: 1; transform: scale(1); }
+  to   { opacity: 0; transform: scale(0.92); }
+}
+
+@keyframes webai-expand {
+  from { max-height: 0; opacity: 0; overflow: hidden; }
+  to   { max-height: 500px; opacity: 1; overflow: hidden; }
+}
+
+@keyframes webai-spin {
+  from { transform: rotate(0deg); }
+  to   { transform: rotate(360deg); }
+}
+
+@keyframes webai-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+@keyframes webai-shimmer {
+  0%   { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes webai-bounce-in {
+  0%   { opacity: 0; transform: scale(0.85); }
+  60%  { opacity: 1; transform: scale(1.04); }
+  100% { opacity: 1; transform: scale(1); }
+}
+
+/* ─── Core Layout ────────────────────────────────────────────────── */
+
 .ai-assistant-pane {
   display: flex;
   flex-direction: column;
@@ -16,6 +96,8 @@
   min-width: 0;
   overflow: hidden;
   width: 100%;
+  transition: background var(--webai-transition-slow),
+              color var(--webai-transition-slow);
 }
 
 .zotero-webai-shell-header {
@@ -23,6 +105,8 @@
   position: sticky;
   top: 0;
   z-index: 2;
+  transition: background var(--webai-transition-normal),
+              border-color var(--webai-transition-normal);
 }
 
 .zotero-webai-shell-scope {
@@ -36,6 +120,8 @@
   min-width: 0;
   overflow: hidden;
 }
+
+/* ─── Layout Modes ───────────────────────────────────────────────── */
 
 .zotero-webai-shell[data-layout="compact"] .zotero-webai-shell-header {
   gap: 6px;
@@ -167,6 +253,8 @@
   min-width: 0;
 }
 
+/* ─── Selection Popup (existing) ─────────────────────────────────── */
+
 .ai-assistant-selection-popup {
   font: inherit;
 }
@@ -174,6 +262,8 @@
 .ai-assistant-selection-popup .toolbar-button {
   font: inherit;
 }
+
+/* ─── Reader Toolbar Button ──────────────────────────────────────── */
 
 .zotero-webai-reader-toolbar-button {
   align-items: center;
@@ -190,10 +280,16 @@
   margin: 0;
   min-width: 28px;
   padding: 4px;
+  transition: background var(--webai-transition-fast),
+              transform var(--webai-transition-fast);
 }
 
 .zotero-webai-reader-toolbar-button:hover {
   background: color-mix(in srgb, currentColor 10%, transparent);
+}
+
+.zotero-webai-reader-toolbar-button:active {
+  transform: scale(0.95);
 }
 
 .zotero-webai-reader-toolbar-button img {
@@ -201,6 +297,16 @@
   height: 20px;
   width: 20px;
 }
+
+.zotero-webai-reader-tabbar-button {
+  align-self: center;
+  height: 30px;
+  margin-inline: 2px;
+  min-width: 30px;
+  width: 30px;
+}
+
+/* ─── Mount Points ───────────────────────────────────────────────── */
 
 .ai-assistant-pane-mount,
 .ai-assistant-pane {
@@ -216,6 +322,8 @@
   min-width: 0;
   width: 100%;
 }
+
+/* ─── Focus Mode ─────────────────────────────────────────────────── */
 
 .zotero-webai-focus-mode #zotero-context-pane-sidenav,
 .zotero-webai-focus-mode #zotero-item-pane-sidenav,
@@ -240,4 +348,481 @@
   flex: 1 1 auto;
   min-height: 0;
   min-width: 0;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   NEW: Modern UI Components (zotero-ai-sidebar + zotero-ai-bar)
+   ═══════════════════════════════════════════════════════════════════ */
+
+/* ─── Selection Floating Toolbar ─────────────────────────────────── */
+
+.zotero-webai-selection-toolbar {
+  align-items: center;
+  background: var(--webai-selection-toolbar-bg, #ffffff);
+  border: 1px solid var(--webai-selection-toolbar-border, rgba(0, 0, 0, 0.08));
+  border-radius: var(--webai-radius-lg);
+  box-shadow: var(--webai-shadow-lg);
+  display: inline-flex;
+  gap: 2px;
+  padding: 4px 6px;
+  position: fixed;
+  z-index: 9999;
+  animation: webai-scale-in 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.zotero-webai-selection-toolbar[data-exiting="true"] {
+  animation: webai-scale-out 150ms cubic-bezier(0.4, 0, 0.2, 1) both;
+}
+
+.zotero-webai-selection-toolbar-btn {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: var(--webai-radius-sm);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 4px;
+  height: 28px;
+  justify-content: center;
+  min-width: 28px;
+  padding: 0 8px;
+  transition: background var(--webai-transition-fast),
+              transform var(--webai-transition-fast);
+  white-space: nowrap;
+}
+
+.zotero-webai-selection-toolbar-btn:hover {
+  background: var(--webai-toolbar-btn-hover, rgba(0, 0, 0, 0.06));
+}
+
+.zotero-webai-selection-toolbar-btn:active {
+  transform: scale(0.95);
+}
+
+.zotero-webai-selection-toolbar-btn svg {
+  flex-shrink: 0;
+  height: 14px;
+  width: 14px;
+}
+
+.zotero-webai-selection-toolbar-divider {
+  background: var(--webai-divider, rgba(0, 0, 0, 0.08));
+  height: 16px;
+  margin: 0 2px;
+  width: 1px;
+}
+
+/* ─── Model Selector Dropdown ────────────────────────────────────── */
+
+.zotero-webai-model-selector {
+  position: relative;
+  display: inline-flex;
+}
+
+.zotero-webai-model-selector-trigger {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--webai-model-border, rgba(0, 0, 0, 0.1));
+  border-radius: var(--webai-radius-sm);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 12px;
+  gap: 4px;
+  height: 26px;
+  padding: 0 8px;
+  transition: all var(--webai-transition-fast);
+}
+
+.zotero-webai-model-selector-trigger:hover {
+  background: var(--webai-model-hover, rgba(0, 0, 0, 0.04));
+  border-color: var(--webai-model-border-hover, rgba(0, 0, 0, 0.2));
+}
+
+.zotero-webai-model-selector-dot {
+  border-radius: 50%;
+  display: inline-block;
+  height: 6px;
+  width: 6px;
+}
+
+.zotero-webai-model-selector-dot[data-status="online"] {
+  background: var(--webai-online, #22c55e);
+}
+
+.zotero-webai-model-selector-dot[data-status="offline"] {
+  background: var(--webai-offline, #ef4444);
+}
+
+.zotero-webai-model-selector-dot[data-status="loading"] {
+  background: #f59e0b;
+  animation: webai-pulse 1.5s ease-in-out infinite;
+}
+
+.zotero-webai-model-selector-dropdown {
+  animation: webai-slide-down 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  background: var(--webai-dropdown-bg, #ffffff);
+  border: 1px solid var(--webai-dropdown-border, rgba(0, 0, 0, 0.1));
+  border-radius: var(--webai-radius-md);
+  box-shadow: var(--webai-shadow-lg);
+  display: flex;
+  flex-direction: column;
+  max-height: 280px;
+  min-width: 200px;
+  overflow: hidden;
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  z-index: 100;
+}
+
+.zotero-webai-model-selector-search {
+  border: 0;
+  border-bottom: 1px solid var(--webai-dropdown-border, rgba(0, 0, 0, 0.08));
+  font-size: 12px;
+  outline: 0;
+  padding: 8px 10px;
+  width: 100%;
+}
+
+.zotero-webai-model-selector-list {
+  flex: 1 1 auto;
+  overflow-y: auto;
+  padding: 4px;
+  scrollbar-width: thin;
+}
+
+.zotero-webai-model-selector-item {
+  align-items: center;
+  border-radius: var(--webai-radius-sm);
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  padding: 6px 8px;
+  transition: background var(--webai-transition-fast);
+}
+
+.zotero-webai-model-selector-item:hover {
+  background: var(--webai-model-hover, rgba(0, 0, 0, 0.04));
+}
+
+.zotero-webai-model-selector-item[data-selected="true"] {
+  background: var(--webai-model-selected, rgba(99, 102, 241, 0.1));
+  font-weight: 600;
+}
+
+/* ─── Theme Toggle Button ────────────────────────────────────────── */
+
+.zotero-webai-theme-toggle {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: var(--webai-radius-sm);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  height: 26px;
+  justify-content: center;
+  padding: 0;
+  transition: background var(--webai-transition-fast),
+              transform var(--webai-transition-fast);
+  width: 26px;
+}
+
+.zotero-webai-theme-toggle:hover {
+  background: var(--webai-toolbar-btn-hover, rgba(0, 0, 0, 0.06));
+}
+
+.zotero-webai-theme-toggle:active {
+  transform: scale(0.9);
+}
+
+.zotero-webai-theme-toggle svg {
+  height: 16px;
+  transition: transform 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  width: 16px;
+}
+
+.zotero-webai-theme-toggle:hover svg {
+  transform: rotate(30deg);
+}
+
+/* ─── Token Usage Bar ────────────────────────────────────────────── */
+
+.zotero-webai-token-bar {
+  align-items: center;
+  display: flex;
+  font-size: 10px;
+  gap: 8px;
+  padding: 4px 12px;
+}
+
+.zotero-webai-token-badge {
+  align-items: center;
+  border: 1px solid var(--webai-token-border, #bbf7d0);
+  border-radius: var(--webai-radius-full);
+  display: inline-flex;
+  font-size: 10px;
+  gap: 3px;
+  line-height: 1;
+  padding: 2px 6px;
+}
+
+.zotero-webai-token-progress {
+  border-radius: var(--webai-radius-full);
+  flex: 1 1 auto;
+  height: 3px;
+  overflow: hidden;
+  position: relative;
+}
+
+.zotero-webai-token-progress-fill {
+  border-radius: var(--webai-radius-full);
+  height: 100%;
+  transition: width var(--webai-transition-normal);
+}
+
+/* ─── Selection Context Bar ──────────────────────────────────────── */
+
+.zotero-webai-context-bar {
+  align-items: center;
+  animation: webai-slide-up 250ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  border-bottom: 1px solid var(--webai-context-border, rgba(0, 0, 0, 0.06));
+  display: flex;
+  font-size: 12px;
+  gap: 8px;
+  padding: 6px 12px;
+}
+
+.zotero-webai-context-bar-preview {
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  display: -webkit-box;
+  flex: 1 1 auto;
+  font-style: italic;
+  overflow: hidden;
+}
+
+.zotero-webai-context-bar-mode {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--webai-context-mode-border, rgba(0, 0, 0, 0.12));
+  border-radius: var(--webai-radius-sm);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  gap: 4px;
+  height: 24px;
+  padding: 0 8px;
+  transition: all var(--webai-transition-fast);
+  white-space: nowrap;
+}
+
+.zotero-webai-context-bar-mode:hover {
+  background: var(--webai-toolbar-btn-hover, rgba(0, 0, 0, 0.04));
+}
+
+.zotero-webai-context-bar-close {
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  opacity: 0.5;
+  padding: 2px;
+  transition: opacity var(--webai-transition-fast);
+}
+
+.zotero-webai-context-bar-close:hover {
+  opacity: 1;
+}
+
+/* ─── Quick Prompts ──────────────────────────────────────────────── */
+
+.zotero-webai-quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 4px 8px;
+}
+
+.zotero-webai-quick-prompt-pill {
+  appearance: none;
+  border: 1px solid var(--webai-qp-border, rgba(0, 0, 0, 0.1));
+  border-radius: var(--webai-radius-full);
+  color: var(--webai-qp-text, #4338ca);
+  cursor: pointer;
+  font-size: 11px;
+  line-height: 1;
+  padding: 4px 10px;
+  transition: all var(--webai-transition-fast);
+  white-space: nowrap;
+}
+
+.zotero-webai-quick-prompt-pill:hover {
+  background: var(--webai-qp-hover, #e4e4ff);
+  border-color: var(--webai-qp-border-hover, rgba(0, 0, 0, 0.15));
+  transform: translateY(-1px);
+}
+
+.zotero-webai-quick-prompt-pill:active {
+  transform: translateY(0) scale(0.97);
+}
+
+/* ─── Thinking Effort Selector ───────────────────────────────────── */
+
+.zotero-webai-thinking-selector {
+  position: relative;
+  display: inline-flex;
+}
+
+.zotero-webai-thinking-trigger {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 1px solid var(--webai-thinking-border, rgba(0, 0, 0, 0.1));
+  border-radius: var(--webai-radius-sm);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  font-size: 11px;
+  gap: 3px;
+  height: 24px;
+  padding: 0 6px;
+  transition: all var(--webai-transition-fast);
+}
+
+.zotero-webai-thinking-trigger:hover {
+  border-color: var(--webai-thinking-border-hover, rgba(0, 0, 0, 0.2));
+}
+
+.zotero-webai-thinking-dropdown {
+  animation: webai-slide-down 200ms cubic-bezier(0.16, 1, 0.3, 1) both;
+  background: var(--webai-dropdown-bg, #ffffff);
+  border: 1px solid var(--webai-dropdown-border, rgba(0, 0, 0, 0.1));
+  border-radius: var(--webai-radius-md);
+  bottom: calc(100% + 4px);
+  box-shadow: var(--webai-shadow-md);
+  display: flex;
+  flex-direction: column;
+  left: 0;
+  min-width: 140px;
+  overflow: hidden;
+  padding: 4px;
+  position: absolute;
+  z-index: 100;
+}
+
+.zotero-webai-thinking-dropdown-title {
+  color: var(--webai-muted, #666);
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.05em;
+  padding: 4px 8px 2px;
+  text-transform: uppercase;
+}
+
+.zotero-webai-thinking-option {
+  align-items: center;
+  border-radius: var(--webai-radius-sm);
+  cursor: pointer;
+  display: flex;
+  font-size: 12px;
+  gap: 6px;
+  padding: 5px 8px;
+  transition: background var(--webai-transition-fast);
+}
+
+.zotero-webai-thinking-option:hover {
+  background: var(--webai-model-hover, rgba(0, 0, 0, 0.04));
+}
+
+.zotero-webai-thinking-option[data-selected="true"] {
+  background: var(--webai-model-selected, rgba(99, 102, 241, 0.1));
+  font-weight: 600;
+}
+
+.zotero-webai-thinking-effort-dot {
+  border-radius: 50%;
+  height: 6px;
+  width: 6px;
+}
+
+.zotero-webai-thinking-effort-dot[data-level="none"]   { background: #94a3b8; }
+.zotero-webai-thinking-effort-dot[data-level="low"]    { background: #60a5fa; }
+.zotero-webai-thinking-effort-dot[data-level="medium"] { background: #34d399; }
+.zotero-webai-thinking-effort-dot[data-level="high"]   { background: #fbbf24; }
+.zotero-webai-thinking-effort-dot[data-level="xhigh"]  { background: #f87171; }
+
+/* ─── Shared Interactive Utilities ───────────────────────────────── */
+
+.zotero-webai-icon-btn {
+  align-items: center;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  border-radius: var(--webai-radius-sm);
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  height: 26px;
+  justify-content: center;
+  padding: 0;
+  transition: background var(--webai-transition-fast),
+              transform var(--webai-transition-fast);
+  width: 26px;
+}
+
+.zotero-webai-icon-btn:hover {
+  background: var(--webai-toolbar-btn-hover, rgba(0, 0, 0, 0.06));
+}
+
+.zotero-webai-icon-btn:active {
+  transform: scale(0.9);
+}
+
+.zotero-webai-icon-btn svg {
+  height: 16px;
+  width: 16px;
+}
+
+/* ─── Card Hover Effects ─────────────────────────────────────────── */
+
+.zotero-webai-card {
+  border-radius: var(--webai-radius-md);
+  box-shadow: var(--webai-shadow-sm);
+  transition: box-shadow var(--webai-transition-normal),
+              transform var(--webai-transition-normal);
+}
+
+.zotero-webai-card:hover {
+  box-shadow: var(--webai-shadow-md);
+}
+
+/* ─── Scrollbar Styling ──────────────────────────────────────────── */
+
+.zotero-webai-shell ::-webkit-scrollbar {
+  width: 6px;
+}
+
+.zotero-webai-shell ::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.zotero-webai-shell ::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.15);
+  border-radius: 3px;
+}
+
+.zotero-webai-shell ::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.25);
 }

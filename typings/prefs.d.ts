@@ -25,6 +25,12 @@ declare namespace _ZoteroTypes {
       "configSyncUsername": string;
       "configSyncPassword": string;
       "configSyncSnapshot": string;
+      "themeMode": string;
+      "defaultThinkingEffort": string;
+      "selectionToolbarEnabled": boolean;
+      "tokenDisplayEnabled": boolean;
+      "quickPromptsEnabled": boolean;
+      "selectionContextMode": string;
     };
   }
 }

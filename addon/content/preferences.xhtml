@@ -150,6 +150,168 @@
           </html:select>
         </vbox>
 
+        <vbox style="display: flex; flex-direction: column; gap: 6px">
+          <label
+            value="Theme mode"
+            data-l10n-id="ai-assistant-pref-theme-mode-label"
+            control="zotero-ai-assistant-pref-theme-mode"
+            style="width: 150px"
+          />
+          <html:select
+            id="zotero-ai-assistant-pref-theme-mode"
+            style="
+              min-width: 320px;
+              max-width: 520px;
+              padding: 6px 8px;
+              border-radius: 6px;
+            "
+          >
+            <html:option
+              value="auto"
+              data-l10n-id="ai-assistant-pref-theme-mode-auto"
+            >
+              Follow system
+            </html:option>
+            <html:option
+              value="light"
+              data-l10n-id="ai-assistant-pref-theme-mode-light"
+            >
+              Light
+            </html:option>
+            <html:option
+              value="dark"
+              data-l10n-id="ai-assistant-pref-theme-mode-dark"
+            >
+              Dark
+            </html:option>
+          </html:select>
+        </vbox>
+
+        <vbox style="display: flex; flex-direction: column; gap: 6px">
+          <label
+            value="Default PDF selection context"
+            data-l10n-id="ai-assistant-pref-selection-context-mode-label"
+            control="zotero-ai-assistant-pref-selection-context-mode"
+            style="width: 220px"
+          />
+          <html:select
+            id="zotero-ai-assistant-pref-selection-context-mode"
+            style="
+              min-width: 320px;
+              max-width: 520px;
+              padding: 6px 8px;
+              border-radius: 6px;
+            "
+          >
+            <html:option
+              value="selection-only"
+              data-l10n-id="ai-assistant-pref-selection-context-mode-selection"
+            >
+              Selected text only
+            </html:option>
+            <html:option
+              value="selection-plus-full"
+              data-l10n-id="ai-assistant-pref-selection-context-mode-full"
+            >
+              Selected text + full text overview
+            </html:option>
+          </html:select>
+        </vbox>
+
+        <vbox style="display: flex; flex-direction: column; gap: 6px">
+          <label
+            value="Default thinking effort"
+            data-l10n-id="ai-assistant-pref-thinking-effort-label"
+            control="zotero-ai-assistant-pref-thinking-effort"
+            style="width: 150px"
+          />
+          <html:select
+            id="zotero-ai-assistant-pref-thinking-effort"
+            style="
+              min-width: 320px;
+              max-width: 520px;
+              padding: 6px 8px;
+              border-radius: 6px;
+            "
+          >
+            <html:option
+              value="none"
+              data-l10n-id="ai-assistant-pref-thinking-effort-none"
+            >
+              Off
+            </html:option>
+            <html:option
+              value="low"
+              data-l10n-id="ai-assistant-pref-thinking-effort-low"
+            >
+              Low
+            </html:option>
+            <html:option
+              value="medium"
+              data-l10n-id="ai-assistant-pref-thinking-effort-medium"
+            >
+              Medium
+            </html:option>
+            <html:option
+              value="high"
+              data-l10n-id="ai-assistant-pref-thinking-effort-high"
+            >
+              High
+            </html:option>
+            <html:option
+              value="xhigh"
+              data-l10n-id="ai-assistant-pref-thinking-effort-xhigh"
+            >
+              Extremely High
+            </html:option>
+          </html:select>
+        </vbox>
+
+        <html:label
+          style="
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 620px;
+          "
+        >
+          <html:input
+            id="zotero-ai-assistant-pref-selection-toolbar"
+            type="checkbox"
+          />
+          <html:span data-l10n-id="ai-assistant-pref-selection-toolbar-label">Enable floating selection toolbar above selected PDF text</html:span>
+        </html:label>
+
+        <html:label
+          style="
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 620px;
+          "
+        >
+          <html:input
+            id="zotero-ai-assistant-pref-token-display"
+            type="checkbox"
+          />
+          <html:span data-l10n-id="ai-assistant-pref-token-display-label">Enable token usage display at the bottom bar</html:span>
+        </html:label>
+
+        <html:label
+          style="
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            max-width: 620px;
+          "
+        >
+          <html:input
+            id="zotero-ai-assistant-pref-quick-prompts"
+            type="checkbox"
+          />
+          <html:span data-l10n-id="ai-assistant-pref-quick-prompts-label">Enable quick prompts pill-buttons below scope bar</html:span>
+        </html:label>
+
         <html:label
           style="
             display: flex;
@@ -165,6 +327,7 @@
           <html:span data-l10n-id="ai-assistant-pref-item-pane-button-label">Show Zotero WebAI entry in the item information side pane</html:span>
         </html:label>
       </vbox>
+
 
       <vbox
         style="

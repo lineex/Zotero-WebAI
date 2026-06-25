@@ -99,6 +99,13 @@ const SYNC_PUSH_ID = "zotero-ai-assistant-pref-sync-push";
 const SYNC_PULL_ID = "zotero-ai-assistant-pref-sync-pull";
 const SYNC_STATUS_ID = "zotero-ai-assistant-pref-sync-status";
 
+const THEME_MODE_ID = "zotero-ai-assistant-pref-theme-mode";
+const THINKING_EFFORT_ID = "zotero-ai-assistant-pref-thinking-effort";
+const SELECTION_TOOLBAR_ID = "zotero-ai-assistant-pref-selection-toolbar";
+const TOKEN_DISPLAY_ID = "zotero-ai-assistant-pref-token-display";
+const QUICK_PROMPTS_ID_PREF = "zotero-ai-assistant-pref-quick-prompts";
+const SELECTION_CONTEXT_MODE_ID = "zotero-ai-assistant-pref-selection-context-mode";
+
 const MAX_CUSTOM_SLASH_COMMANDS = 1000;
 const BUTTON_ACTIVATION_DEDUPE_WINDOW_MS = 300;
 const HTML_NS = "http://www.w3.org/1999/xhtml";
@@ -664,6 +671,12 @@ export function registerPreferencesPane(
   bindFieldEvent(doc, SYNC_REMOTE_PATH_ID, "change", () => persist());
   bindFieldEvent(doc, SYNC_USERNAME_ID, "change", () => persist());
   bindFieldEvent(doc, SYNC_PASSWORD_ID, "change", () => persist());
+  bindTriggeredFieldEvents(doc, THEME_MODE_ID, ["change", "command"], () => persist());
+  bindTriggeredFieldEvents(doc, THINKING_EFFORT_ID, ["change", "command"], () => persist());
+  bindFieldEvent(doc, SELECTION_TOOLBAR_ID, "change", () => persist());
+  bindFieldEvent(doc, TOKEN_DISPLAY_ID, "change", () => persist());
+  bindFieldEvent(doc, QUICK_PROMPTS_ID_PREF, "change", () => persist());
+  bindTriggeredFieldEvents(doc, SELECTION_CONTEXT_MODE_ID, ["change", "command"], () => persist());
   bindButtonActivation(doc, SLASH_ADD_ID, () => {
     const next = addCustomSlashCard(slashState);
     if (next === slashState) {
@@ -714,6 +727,12 @@ function hydrateForm(
   const syncRemotePathField = getField(doc, SYNC_REMOTE_PATH_ID);
   const syncUsernameField = getField(doc, SYNC_USERNAME_ID);
   const workspaceLayoutField = getField(doc, WORKSPACE_LAYOUT_ID);
+  const themeModeField = getField(doc, THEME_MODE_ID);
+  const thinkingEffortField = getField(doc, THINKING_EFFORT_ID);
+  const selectionToolbarField = getField(doc, SELECTION_TOOLBAR_ID);
+  const tokenDisplayField = getField(doc, TOKEN_DISPLAY_ID);
+  const quickPromptsField = getField(doc, QUICK_PROMPTS_ID_PREF);
+  const selectionContextModeField = getField(doc, SELECTION_CONTEXT_MODE_ID);
 
   if (customPresetsField) {
     customPresetsField.value = serializeSlashSettingsState(slashState);
@@ -751,6 +770,24 @@ function hydrateForm(
   }
   if (syncPasswordField) {
     syncPasswordField.value = settings.configSyncPassword || "";
+  }
+  if (themeModeField) {
+    themeModeField.value = settings.themeMode || "auto";
+  }
+  if (thinkingEffortField) {
+    thinkingEffortField.value = settings.defaultThinkingEffort || "none";
+  }
+  if (selectionToolbarField) {
+    selectionToolbarField.checked = settings.selectionToolbarEnabled !== false;
+  }
+  if (tokenDisplayField) {
+    tokenDisplayField.checked = settings.tokenDisplayEnabled !== false;
+  }
+  if (quickPromptsField) {
+    quickPromptsField.checked = settings.quickPromptsEnabled !== false;
+  }
+  if (selectionContextModeField) {
+    selectionContextModeField.value = settings.selectionContextMode || "selection-only";
   }
   applyEvidenceProviderVisibility(doc, settings.evidenceProviderMode);
 }
@@ -1108,6 +1145,13 @@ function readFormValues(doc: PreferencesDocument): Partial<PersistedSettings> {
   const syncRemotePathField = getField(doc, SYNC_REMOTE_PATH_ID);
   const syncUsernameField = getField(doc, SYNC_USERNAME_ID);
   const workspaceLayoutField = getField(doc, WORKSPACE_LAYOUT_ID);
+  const themeModeField = getField(doc, THEME_MODE_ID);
+  const thinkingEffortField = getField(doc, THINKING_EFFORT_ID);
+  const selectionToolbarField = getField(doc, SELECTION_TOOLBAR_ID);
+  const tokenDisplayField = getField(doc, TOKEN_DISPLAY_ID);
+  const quickPromptsField = getField(doc, QUICK_PROMPTS_ID_PREF);
+  const selectionContextModeField = getField(doc, SELECTION_CONTEXT_MODE_ID);
+
   const selectedProvider = evidenceProviderField?.value;
   const evidenceProviderMode =
     selectedProvider === "mcp-http" || selectedProvider === "mcp-web-search"
@@ -1144,6 +1188,12 @@ function readFormValues(doc: PreferencesDocument): Partial<PersistedSettings> {
     mcpToolArgumentsTemplate: DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
     mcpToolName: DEFAULT_SETTINGS.mcpToolName,
     workspaceLayout,
+    themeMode: themeModeField?.value === "light" || themeModeField?.value === "dark" || themeModeField?.value === "auto" ? themeModeField.value : "auto",
+    defaultThinkingEffort: thinkingEffortField?.value as any || "none",
+    selectionToolbarEnabled: selectionToolbarField?.checked !== false,
+    tokenDisplayEnabled: tokenDisplayField?.checked !== false,
+    quickPromptsEnabled: quickPromptsField?.checked !== false,
+    selectionContextMode: selectionContextModeField?.value as any || "selection-only",
   };
 }
 
@@ -1464,6 +1514,12 @@ function pickBackupSettings(
       settings.mcpToolArgumentsTemplate || DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
     mcpToolName: settings.mcpToolName || DEFAULT_SETTINGS.mcpToolName,
     workspaceLayout: settings.workspaceLayout || DEFAULT_SETTINGS.workspaceLayout,
+    themeMode: settings.themeMode || "auto",
+    defaultThinkingEffort: settings.defaultThinkingEffort || "none",
+    selectionToolbarEnabled: settings.selectionToolbarEnabled !== false,
+    tokenDisplayEnabled: settings.tokenDisplayEnabled !== false,
+    quickPromptsEnabled: settings.quickPromptsEnabled !== false,
+    selectionContextMode: settings.selectionContextMode || "selection-only",
   };
 }
 

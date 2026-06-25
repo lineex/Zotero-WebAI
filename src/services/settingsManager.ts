@@ -10,6 +10,9 @@ export type EvidenceProviderMode =
 type LegacyEvidenceProviderMode = "builtin-search";
 export type WorkspaceLayoutMode = "stacked" | "split" | "compact";
 export type IconPlacementMode = "both" | "reader-sidebar" | "reader-toolbar";
+export type ThemeMode = "auto" | "light" | "dark";
+export type ThinkingEffort = "none" | "low" | "medium" | "high" | "xhigh";
+export type SelectionContextMode = "selection-only" | "selection-plus-full";
 
 export interface PersistedSettings {
   configSyncEnabled: boolean;
@@ -19,6 +22,7 @@ export interface PersistedSettings {
   configSyncSnapshot?: string;
   configSyncUsername?: string;
   customPresets: string;
+  defaultThinkingEffort: ThinkingEffort;
   evidenceEnabled: boolean;
   evidenceProviderMode: EvidenceProviderMode;
   iconPlacement: IconPlacementMode;
@@ -29,6 +33,11 @@ export interface PersistedSettings {
   mcpEndpoint?: string;
   mcpToolArgumentsTemplate?: string;
   mcpToolName?: string;
+  quickPromptsEnabled: boolean;
+  selectionContextMode: SelectionContextMode;
+  selectionToolbarEnabled: boolean;
+  themeMode: ThemeMode;
+  tokenDisplayEnabled: boolean;
   workspaceLayout: WorkspaceLayoutMode;
 }
 
@@ -47,6 +56,7 @@ export const DEFAULT_SETTINGS: Settings = {
   configSyncSnapshot: "",
   configSyncUsername: "",
   customPresets: "",
+  defaultThinkingEffort: "none",
   evidenceEnabled: false,
   evidenceProviderMode: DEFAULT_EVIDENCE_PROVIDER_MODE,
   iconPlacement: "both",
@@ -57,6 +67,11 @@ export const DEFAULT_SETTINGS: Settings = {
   mcpEndpoint: DEFAULT_MCP_ENDPOINT,
   mcpToolArgumentsTemplate: DEFAULT_MCP_TOOL_ARGUMENTS_TEMPLATE,
   mcpToolName: "search_library",
+  quickPromptsEnabled: true,
+  selectionContextMode: "selection-only",
+  selectionToolbarEnabled: true,
+  themeMode: "auto",
+  tokenDisplayEnabled: true,
   workspaceLayout: "stacked",
 };
 
@@ -87,6 +102,28 @@ function normalizeIconPlacementMode(value: unknown): IconPlacementMode {
     value === "both"
     ? value
     : DEFAULT_SETTINGS.iconPlacement;
+}
+
+function normalizeThemeMode(value: unknown): ThemeMode {
+  return value === "light" || value === "dark" || value === "auto"
+    ? value
+    : DEFAULT_SETTINGS.themeMode;
+}
+
+function normalizeThinkingEffort(value: unknown): ThinkingEffort {
+  return value === "none" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+    ? value
+    : DEFAULT_SETTINGS.defaultThinkingEffort;
+}
+
+function normalizeSelectionContextMode(value: unknown): SelectionContextMode {
+  return value === "selection-only" || value === "selection-plus-full"
+    ? value
+    : DEFAULT_SETTINGS.selectionContextMode;
 }
 
 export type CustomCommandPreset = Partial<CommandPreset> & {
@@ -381,6 +418,7 @@ export function getSettings(): Settings {
     configSyncSnapshot: (getPref("configSyncSnapshot") || "") as string,
     configSyncUsername: (getPref("configSyncUsername") || "") as string,
     customPresets: normalizeCustomPresetsValue(getPref("customPresets")),
+    defaultThinkingEffort: normalizeThinkingEffort(getPref("defaultThinkingEffort")),
     evidenceEnabled: normalizeBoolean(getPref("evidenceEnabled")),
     evidenceProviderMode: normalizeEvidenceProviderMode(
       getPref("evidenceProviderMode") as string | undefined,
@@ -405,6 +443,17 @@ export function getSettings(): Settings {
     mcpToolName:
       ((getPref("mcpToolName") || "") as string).trim() ||
       DEFAULT_SETTINGS.mcpToolName,
+    quickPromptsEnabled: getPref("quickPromptsEnabled") === undefined
+      ? DEFAULT_SETTINGS.quickPromptsEnabled
+      : normalizeBoolean(getPref("quickPromptsEnabled")),
+    selectionContextMode: normalizeSelectionContextMode(getPref("selectionContextMode")),
+    selectionToolbarEnabled: getPref("selectionToolbarEnabled") === undefined
+      ? DEFAULT_SETTINGS.selectionToolbarEnabled
+      : normalizeBoolean(getPref("selectionToolbarEnabled")),
+    themeMode: normalizeThemeMode(getPref("themeMode")),
+    tokenDisplayEnabled: getPref("tokenDisplayEnabled") === undefined
+      ? DEFAULT_SETTINGS.tokenDisplayEnabled
+      : normalizeBoolean(getPref("tokenDisplayEnabled")),
     workspaceLayout: normalizeWorkspaceLayoutMode(getPref("workspaceLayout")),
   };
 }
@@ -482,6 +531,24 @@ export function saveSettings(settings: Partial<PersistedSettings>): void {
       "workspaceLayout",
       normalizeWorkspaceLayoutMode(settings.workspaceLayout),
     );
+  }
+  if (settings.themeMode !== undefined) {
+    setPref("themeMode", normalizeThemeMode(settings.themeMode));
+  }
+  if (settings.defaultThinkingEffort !== undefined) {
+    setPref("defaultThinkingEffort", normalizeThinkingEffort(settings.defaultThinkingEffort));
+  }
+  if (settings.selectionToolbarEnabled !== undefined) {
+    setPref("selectionToolbarEnabled", settings.selectionToolbarEnabled);
+  }
+  if (settings.tokenDisplayEnabled !== undefined) {
+    setPref("tokenDisplayEnabled", settings.tokenDisplayEnabled);
+  }
+  if (settings.quickPromptsEnabled !== undefined) {
+    setPref("quickPromptsEnabled", settings.quickPromptsEnabled);
+  }
+  if (settings.selectionContextMode !== undefined) {
+    setPref("selectionContextMode", normalizeSelectionContextMode(settings.selectionContextMode));
   }
 }
 
