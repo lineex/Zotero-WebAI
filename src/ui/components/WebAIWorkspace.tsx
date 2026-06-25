@@ -221,6 +221,7 @@ const SESSION_HISTORY_LIMIT = 1000;
 const SESSION_RECORD_LIMIT = 1000;
 const WEB_SEARCH_RESULT_LIMIT = 6;
 const WEB_SEARCH_CONTEXT_TEXT_LIMIT = 7000;
+const COMPOSER_IMAGE_INPUT_ENABLED = false;
 const ASSISTANT_CAPTURE_MAX_ATTEMPTS = 120;
 const ASSISTANT_CAPTURE_INITIAL_POLL_MS = 1000;
 const ASSISTANT_CAPTURE_POLL_MS = 1500;
@@ -1613,7 +1614,8 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
     overrideTurnID?: string,
   ) => {
     const isComposerSend = typeof overrideMessage !== "string";
-    const imageAttachment = isComposerSend ? composerImage : null;
+    const imageAttachment =
+      COMPOSER_IMAGE_INPUT_ENABLED && isComposerSend ? composerImage : null;
     const rawMessage = isComposerSend ? message : overrideMessage;
     const skillForResolution = isComposerSend ? selectedSkill : null;
     if (isNewConversationCommand(rawMessage)) {
@@ -2600,7 +2602,11 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           className="zotero-webai-composer-input"
           onChange={(event) => setMessage(event.target.value)}
           onKeyDown={handleKeyDown}
-          onPaste={(event) => void runAction(() => handleComposerPaste(event))}
+          onPaste={
+            COMPOSER_IMAGE_INPUT_ENABLED
+              ? (event) => void runAction(() => handleComposerPaste(event))
+              : undefined
+          }
           placeholder={text.composerPlaceholder}
           style={{
             ...styles.composerInput,
@@ -2610,15 +2616,17 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           value={message}
         />
 
-        <input
-          accept="image/*"
-          onChange={(event) => void runAction(() => handleComposerImageChange(event))}
-          ref={composerImageInputRef}
-          style={styles.hiddenFileInput}
-          type="file"
-        />
+        {COMPOSER_IMAGE_INPUT_ENABLED && (
+          <input
+            accept="image/*"
+            onChange={(event) => void runAction(() => handleComposerImageChange(event))}
+            ref={composerImageInputRef}
+            style={styles.hiddenFileInput}
+            type="file"
+          />
+        )}
 
-        {composerImage && (
+        {COMPOSER_IMAGE_INPUT_ENABLED && composerImage && (
           <div
             style={{
               ...styles.composerImagePreview,
@@ -2662,17 +2670,19 @@ export const WebAIWorkspace: React.FC<WebAIWorkspaceProps> = ({
           >
             {status || text.defaultStatus}
           </div>
-          <button
-            style={{
-              ...styles.inlineActionButton,
-              borderColor: composerImage ? theme.badgeBorder : theme.buttonBorder,
-              color: composerImage ? theme.badgeText : theme.buttonText,
-            }}
-            onClick={selectComposerImage}
-            type="button"
-          >
-            {text.buttons.image}
-          </button>
+          {COMPOSER_IMAGE_INPUT_ENABLED && (
+            <button
+              style={{
+                ...styles.inlineActionButton,
+                borderColor: composerImage ? theme.badgeBorder : theme.buttonBorder,
+                color: composerImage ? theme.badgeText : theme.buttonText,
+              }}
+              onClick={selectComposerImage}
+              type="button"
+            >
+              {text.buttons.image}
+            </button>
+          )}
           <button
             style={{
               ...styles.sendButton,
@@ -9238,11 +9248,11 @@ const styles: Record<string, React.CSSProperties> = {
     borderRadius: "12px",
     boxSizing: "border-box",
     display: "flex",
-    flex: "0 0 auto",
+    flex: "1 1 auto",
     flexDirection: "column",
     gap: 0,
-    height: "430px",
-    maxHeight: "78vh",
+    height: "clamp(360px, 48vh, 620px)",
+    maxHeight: "min(78vh, 720px)",
     minHeight: "260px",
     minWidth: 0,
     overflow: "hidden",
@@ -9383,7 +9393,8 @@ const styles: Record<string, React.CSSProperties> = {
     maxWidth: "100%",
     minWidth: 0,
     minHeight: 0,
-    overflow: "auto",
+    overflowX: "hidden",
+    overflowY: "auto",
     padding: "12px",
     width: "100%",
   },
@@ -9753,7 +9764,7 @@ const styles: Record<string, React.CSSProperties> = {
     flex: "0 0 auto",
     flexDirection: "column",
     gap: "8px",
-    minHeight: "150px",
+    minHeight: "132px",
     minWidth: 0,
     overflow: "visible",
     padding: "10px",
@@ -9842,8 +9853,8 @@ const styles: Record<string, React.CSSProperties> = {
     font: "inherit",
     fontSize: typography.body,
     lineHeight: 1.55,
-    maxHeight: "220px",
-    minHeight: "84px",
+    maxHeight: "200px",
+    minHeight: "76px",
     outline: "none",
     padding: "4px 2px",
     resize: "vertical",
@@ -9881,6 +9892,7 @@ const styles: Record<string, React.CSSProperties> = {
   composerFooter: {
     alignItems: "center",
     display: "flex",
+    flexWrap: "nowrap",
     gap: "8px",
     justifyContent: "space-between",
     minWidth: 0,
