@@ -65,12 +65,6 @@ Default tool argument template:
 {"q":"{{query}}","limit":1000,"mode":"complete","relevanceScoring":true,"sort":"relevance"}
 ```
 
-## Support
-
-Development takes time, attention, and tokens. If Zotero WebAI helps your reading workflow, you can buy me a coffee.
-
-<img src="docs/reward-code.png" alt="Buy me a coffee reward code" width="260" />
-
 ## Build
 
 ```bash
@@ -81,3 +75,11 @@ npm run build
 The XPI is emitted under `.scaffold/build/`.
 
 Build outputs are intentionally not tracked in this repository. Download packaged `.xpi` files from GitHub Releases.
+
+
+## Support
+
+Development takes time, attention, and tokens. If Zotero WebAI helps your reading workflow, you can buy me a coffee.
+
+<img src="docs/reward-code.png" alt="Buy me a coffee reward code" width="260" />
+
