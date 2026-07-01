@@ -1,4 +1,4 @@
-# Zotero WebAI-Web AI Assistant Plugin for Zotero
+# Zotero WebAI---Web AI Assistant Plugin for Zotero
 
 [中文](README.zh-CN.md).
 
